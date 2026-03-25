@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import type { Call } from "@/lib/types"
@@ -261,6 +261,8 @@ export default function CallsPage() {
         <SheetContent
           side="right"
           className="w-full overflow-y-auto sm:w-[48%] sm:max-w-none"
+          ref={(el) => { if (el) el.scrollTop = 0 }}
+          key={selectedCall?.id}
         >
           {selectedCall && <CallPanel call={selectedCall} />}
         </SheetContent>

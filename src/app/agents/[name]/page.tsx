@@ -114,10 +114,10 @@ export default function AgentDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" render={<Link href="/agents" />}>
-          <ArrowLeft size={16} className="mr-1" />
+        <Link href="/agents" className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
+          <ArrowLeft size={16} />
           Agents
-        </Button>
+        </Link>
       </div>
 
       <HeaderSection agent={agent} onUpdate={setAgent} />
