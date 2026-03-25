@@ -66,3 +66,30 @@ export function truncateId(id: string): string {
   if (!id) return ""
   return id.length > 12 ? id.slice(0, 12) + "…" : id
 }
+
+export function formatAgentName(name: string): string {
+  return name
+    .split("/")
+    .map((part) =>
+      part
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ")
+    )
+    .join(" \u203a ")
+}
+
+export function relativeTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return "Just now"
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHrs = Math.floor(diffMins / 60)
+  if (diffHrs < 24) return `${diffHrs}h ago`
+  const diffDays = Math.floor(diffHrs / 24)
+  if (diffDays === 1) return "Yesterday"
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}

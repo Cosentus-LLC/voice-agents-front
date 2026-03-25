@@ -39,7 +39,7 @@ type Step = "upload" | "validation" | "running" | "complete"
 export function NewBatchModal({ onBatchCreated }: { onBatchCreated?: () => void }) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<Step>("upload")
-  const [agents, setAgents] = useState<string[]>([])
+  const [agents, setAgents] = useState<{ name: string; display_name: string }[]>([])
   const [selectedAgent, setSelectedAgent] = useState("")
   const [uploading, setUploading] = useState(false)
   const [uploadData, setUploadData] = useState<UploadResponse | null>(null)
@@ -52,7 +52,7 @@ export function NewBatchModal({ onBatchCreated }: { onBatchCreated?: () => void 
   useEffect(() => {
     if (open) {
       getAgents()
-        .then(setAgents)
+        .then((list) => setAgents(list.map((a) => ({ name: a.name, display_name: a.display_name }))))
         .catch(() => setAgents([]))
     }
   }, [open])
@@ -174,8 +174,8 @@ export function NewBatchModal({ onBatchCreated }: { onBatchCreated?: () => void 
                 </SelectTrigger>
                 <SelectContent>
                   {agents.map((agent) => (
-                    <SelectItem key={agent} value={agent}>
-                      {agent}
+                    <SelectItem key={agent.name} value={agent.name}>
+                      {agent.display_name}
                     </SelectItem>
                   ))}
                 </SelectContent>

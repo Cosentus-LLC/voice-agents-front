@@ -70,3 +70,19 @@ export interface BatchStatusResponse {
   completed: number
   failed: number
 }
+
+export interface Agent {
+  name: string
+  display_name: string
+  description: string
+  type: "outbound" | "inbound"
+  llm: { provider: string; model: string }
+  tts: { provider: string; voice_id: string; model: string }
+  stt: { provider: string }
+  tools: string[]
+  first_message: string
+  prompt_variables: string[]
+  prompt_preview: string
+  recording: { enabled: boolean; channels: number }
+  post_call_analyses: { name: string; model: string; output_type: string }[]
+}

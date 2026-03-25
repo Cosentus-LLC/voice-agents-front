@@ -34,8 +34,15 @@ export async function downloadResults(batchId: string) {
   return res.blob()
 }
 
-export async function getAgents(): Promise<string[]> {
+export async function getAgents(): Promise<{ name: string; display_name: string; description: string; type: string }[]> {
   const res = await fetch(`${API_BASE}/api/agents`)
   if (!res.ok) throw new Error(`Agents fetch failed: ${res.statusText}`)
+  const data = await res.json()
+  return data.agents ?? data
+}
+
+export async function getAgent(name: string) {
+  const res = await fetch(`${API_BASE}/api/agents/${encodeURIComponent(name)}`)
+  if (!res.ok) throw new Error(`Agent fetch failed: ${res.statusText}`)
   return res.json()
 }

@@ -5,7 +5,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import type { Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
-import { formatDate, formatDuration, formatPhone, truncateId } from "@/lib/utils"
+import { formatAgentName, formatDuration, formatPhone, relativeTime, truncate, truncateId } from "@/lib/utils"
 import {
   Table,
   TableBody,
@@ -48,6 +48,7 @@ export default function CallsPage() {
   const [page, setPage] = useState(0)
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState("all")
+  const [directionFilter, setDirectionFilter] = useState("all")
   const [agentFilter, setAgentFilter] = useState("all")
   const [agents, setAgents] = useState<string[]>([])
 
@@ -61,6 +62,9 @@ export default function CallsPage() {
     if (statusFilter !== "all") {
       query = query.eq("status", statusFilter)
     }
+    if (directionFilter !== "all") {
+      query = query.eq("direction", directionFilter)
+    }
     if (agentFilter !== "all") {
       query = query.eq("agent_name", agentFilter)
     }
@@ -73,7 +77,7 @@ export default function CallsPage() {
     setCalls((data as Call[]) ?? [])
     setTotal(count ?? 0)
     setLoading(false)
-  }, [page, statusFilter, agentFilter])
+  }, [page, statusFilter, directionFilter, agentFilter])
 
   useEffect(() => {
     fetchCalls()
@@ -124,20 +128,37 @@ export default function CallsPage() {
         </Select>
 
         <Select
+          value={directionFilter}
+          onValueChange={(val) => {
+            setDirectionFilter(val ?? "all")
+            setPage(0)
+          }}
+        >
+          <SelectTrigger className="w-[150px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Directions</SelectItem>
+            <SelectItem value="outbound">Outbound</SelectItem>
+            <SelectItem value="inbound">Inbound</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select
           value={agentFilter}
           onValueChange={(val) => {
             setAgentFilter(val ?? "all")
             setPage(0)
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[200px]">
             <SelectValue placeholder="All Agents" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Agents</SelectItem>
             {agents.map((a) => (
               <SelectItem key={a} value={a}>
-                {a}
+                {formatAgentName(a)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -159,10 +180,15 @@ export default function CallsPage() {
           <Phone size={40} className="text-muted-foreground/50" />
           <h3 className="mt-4 text-lg font-medium">No calls found</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            {statusFilter !== "all" || agentFilter !== "all"
+            {statusFilter !== "all" || directionFilter !== "all" || agentFilter !== "all"
               ? "Try adjusting your filters."
-              : "Calls will appear here once batches are run."}
+              : "No calls yet. Run a batch to get started."}
           </p>
+          {statusFilter === "all" && directionFilter === "all" && agentFilter === "all" && (
+            <Button variant="link" className="mt-2" render={<Link href="/batches" />}>
+              Go to Batches
+            </Button>
+          )}
         </div>
       ) : (
         <>
@@ -176,55 +202,65 @@ export default function CallsPage() {
                   <TableHead>Direction</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Duration</TableHead>
-                  <TableHead>Created</TableHead>
+                  <TableHead className="min-w-[180px]">AI Notes</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead className="w-[70px]" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {calls.map((call) => (
-                  <TableRow key={call.id}>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {truncateId(call.id)}
-                    </TableCell>
-                    <TableCell>{call.agent_name}</TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {formatPhone(call.target_number)}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={call.direction} />
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={call.status} />
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {formatDuration(call.duration_secs)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(call.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <MoreHorizontal size={16} />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem render={<Link href={`/calls/${call.id}`} />}>
-                            <Eye size={14} />
-                            View Call
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => navigator.clipboard.writeText(call.id)}
-                          >
-                            <Copy size={14} />
-                            Copy Call ID
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {calls.map((call) => {
+                  const notes =
+                    typeof call.post_call_analyses?.call_notes === "string"
+                      ? call.post_call_analyses.call_notes
+                      : ""
+                  return (
+                    <TableRow key={call.id}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {truncateId(call.id)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatAgentName(call.agent_name)}
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {formatPhone(call.target_number)}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={call.direction} />
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={call.status} />
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {formatDuration(call.duration_secs)}
+                      </TableCell>
+                      <TableCell className="max-w-[220px] text-xs text-muted-foreground">
+                        {notes ? truncate(notes, 80) : "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">
+                        {relativeTime(call.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
+                            <MoreHorizontal size={16} />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem render={<Link href={`/calls/${call.id}`} />}>
+                              <Eye size={14} />
+                              View Call
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => navigator.clipboard.writeText(call.id)}
+                            >
+                              <Copy size={14} />
+                              Copy Call ID
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </div>

@@ -10,6 +10,7 @@ import { AudioPlayer } from "@/components/audio-player"
 import { CallInfoCard } from "@/components/call-info-card"
 import { AnalysisCard } from "@/components/analysis-card"
 import { CaseDataCard } from "@/components/case-data-card"
+import { formatAgentName } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeft, AlertTriangle } from "lucide-react"
@@ -72,9 +73,14 @@ export default function CallDetailPage({
         </Button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Call Detail</h1>
-        <StatusBadge status={call.status} />
+      <div>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Call Detail</h1>
+          <StatusBadge status={call.status} />
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {formatAgentName(call.agent_name)}
+        </p>
       </div>
 
       {call.error && (

@@ -1,6 +1,7 @@
 "use client"
 
 import { User, Settings, LogOut, HelpCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +17,7 @@ export function Header() {
       <div />
       <div className="flex items-center gap-3">
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground outline-none transition-colors hover:bg-muted/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
             <User size={18} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={8}>

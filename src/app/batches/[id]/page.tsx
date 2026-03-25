@@ -128,12 +128,10 @@ export default function BatchDetailPage({
           </p>
         </div>
         <DropdownMenu>
-          <DropdownMenuTrigger
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-input bg-transparent px-3 text-sm font-medium outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
+          <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
             <Download size={14} />
             Downloads
-            <ChevronDown size={14} className="text-muted-foreground" />
+            <ChevronDown size={14} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={handleDownloadOriginal}>
@@ -221,9 +219,7 @@ export default function BatchDetailPage({
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                        >
+                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon" />}>
                           <MoreHorizontal size={16} />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
