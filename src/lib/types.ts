@@ -77,12 +77,27 @@ export interface Agent {
   description: string
   type: "outbound" | "inbound"
   llm: { provider: string; model: string }
-  tts: { provider: string; voice_id: string; model: string }
+  tts: {
+    provider: string
+    voice_id: string
+    model: string
+    settings: {
+      stability: number
+      similarity_boost: number
+      style: number
+      use_speaker_boost: boolean
+      speed: number
+    }
+  }
   stt: { provider: string }
   tools: string[]
   first_message: string
   prompt_variables: string[]
   prompt_preview: string
+  temperature: number
+  max_tokens: number
   recording: { enabled: boolean; channels: number }
+  telephony: { phone_number: string }
+  transfer_targets: Record<string, string>
   post_call_analyses: { name: string; model: string; output_type: string }[]
 }

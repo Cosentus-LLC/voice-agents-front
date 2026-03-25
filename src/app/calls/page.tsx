@@ -185,9 +185,9 @@ export default function CallsPage() {
               : "No calls yet. Run a batch to get started."}
           </p>
           {statusFilter === "all" && directionFilter === "all" && agentFilter === "all" && (
-            <Button variant="link" className="mt-2" render={<Link href="/batches" />}>
+            <Link href="/batches" className="mt-2 text-sm font-medium text-[var(--color-brand)] hover:underline">
               Go to Batches
-            </Button>
+            </Link>
           )}
         </div>
       ) : (
