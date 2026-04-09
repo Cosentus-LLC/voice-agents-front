@@ -33,6 +33,18 @@ export function formatDateTime(dateStr: string | null): string {
   })
 }
 
+export function formatCompactDateTime(dateStr: string | null): string {
+  if (!dateStr) return "—"
+  return new Date(dateStr).toLocaleString("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+}
+
 export function formatTime(dateStr: string | null): string {
   if (!dateStr) return ""
   return new Date(dateStr).toLocaleTimeString("en-US", {
@@ -49,12 +61,22 @@ export function formatPhone(phone: string): string {
     const area = cleaned.slice(1, 4)
     const mid = cleaned.slice(4, 7)
     const last = cleaned.slice(7)
-    return `(${area}) ${mid}-${last}`
+    return `+1 (${area}) ${mid}-${last}`
   }
   if (cleaned.length === 10) {
-    return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
+    return `+1 (${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
   }
   return phone
+}
+
+/** E.g. +1 (949) 691-3324 (Main Line) — omits parens when no friendly name. */
+export function formatPhoneNumberLabel(phone: {
+  number: string
+  friendly_name?: string | null
+}): string {
+  const base = formatPhone(phone.number)
+  const name = phone.friendly_name?.trim()
+  return name ? `${base} (${name})` : base
 }
 
 export function truncate(str: string, length: number): string {

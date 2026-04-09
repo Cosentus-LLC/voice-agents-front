@@ -1,4 +1,4 @@
-import type { Agent, AgentSchema, AgentTool } from "./types"
+import type { Agent, AgentSchema, AgentTool, PostCallConfig, PostCallField } from "./types"
 
 function num(v: unknown, fallback: number): number {
   return typeof v === "number" && !Number.isNaN(v) ? v : fallback
@@ -29,17 +29,52 @@ function toolsArr(v: unknown): AgentTool[] {
   })
 }
 
-function postAnalyses(v: unknown): Agent["post_call_analyses"] {
-  if (!Array.isArray(v)) return []
-  return v.map((x) => {
-    const o = x as Record<string, unknown>
-    return {
-      name: str(o.name, "analysis"),
-      model: str(o.model, ""),
-      output_type: str(o.output_type, "text"),
-      prompt: typeof o.prompt === "string" ? o.prompt : undefined,
+function postAnalyses(v: unknown): PostCallConfig {
+  const DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+  // New shape: { model, fields[] }
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>
+    if (Array.isArray(o.fields)) {
+      const fields: PostCallField[] = o.fields.map((raw) => {
+        const f = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
+        const t = str(f.type, "text")
+        return {
+          name: str(f.name, "field"),
+          type: t === "selector" ? "selector" : "text",
+          description: str(f.description, ""),
+          format_examples: Array.isArray(f.format_examples)
+            ? f.format_examples.map((x) => String(x)).filter(Boolean)
+            : undefined,
+          choices: Array.isArray(f.choices)
+            ? f.choices.map((x) => String(x)).filter(Boolean)
+            : undefined,
+        }
+      })
+      return { model: str(o.model, DEFAULT_MODEL) || DEFAULT_MODEL, fields }
     }
-  })
+  }
+
+  // Legacy: array of rows
+  if (Array.isArray(v)) {
+    const first = v[0] as Record<string, unknown> | undefined
+    const model = first ? str(first.model, DEFAULT_MODEL) || DEFAULT_MODEL : DEFAULT_MODEL
+    const fields: PostCallField[] = v
+      .map((raw) => {
+        const r = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null) as Record<string, unknown> | null
+        if (!r) return null
+        const output = str(r.output_type, "text")
+        return {
+          name: str(r.name, "field"),
+          type: output === "selector" ? "selector" : "text",
+          description: typeof r.prompt === "string" ? r.prompt : "",
+        } satisfies PostCallField
+      })
+      .filter(Boolean) as PostCallField[]
+    return { model, fields }
+  }
+
+  return { model: DEFAULT_MODEL, fields: [] }
 }
 
 /** Build initial Agent-shaped values from schema.defaults + field_ranges fallbacks */
@@ -47,22 +82,19 @@ export function agentDefaultsFromSchema(schema: AgentSchema): Omit<Agent, "id" |
   const d = schema.defaults ?? {}
   const fr = schema.field_ranges ?? {}
 
-  const temp = fr.temperature?.default ?? num(d.temperature, 0.7)
-  const maxTok = fr.max_tokens?.default ?? num(d.max_tokens, 1024)
-
   return {
     display_name: str(d.display_name, ""),
     description: str(d.description, ""),
     llm_provider: str(d.llm_provider, "openai"),
     llm_model: str(d.llm_model, schema.llm_models[0] ?? ""),
-    temperature: temp,
-    max_tokens: maxTok,
+    temperature: fr.temperature?.default ?? num(d.temperature, 0.7),
+    max_tokens: fr.max_tokens?.default ?? num(d.max_tokens, 390),
     enable_prompt_caching: bool(d.enable_prompt_caching, false),
     tts_provider: str(d.tts_provider, schema.tts_providers[0] ?? "elevenlabs"),
     tts_voice_id: str(d.tts_voice_id, ""),
     tts_model: str(d.tts_model, ""),
     tts_stability: num(d.tts_stability, fr.tts_stability?.default ?? 0.5),
-    tts_similarity_boost: num(d.tts_similarity_boost, fr.tts_similarity_boost?.default ?? 0.75),
+    tts_similarity_boost: num(d.tts_similarity_boost, fr.tts_similarity_boost?.default ?? 0.8),
     tts_style: num(d.tts_style, fr.tts_style?.default ?? 0),
     tts_use_speaker_boost: bool(d.tts_use_speaker_boost, true),
     tts_speed: num(d.tts_speed, fr.tts_speed?.default ?? 1),

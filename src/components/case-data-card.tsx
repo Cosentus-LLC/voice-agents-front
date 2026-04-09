@@ -6,10 +6,11 @@ import { ChevronDown, ChevronUp } from "lucide-react"
 
 interface CaseDataCardProps {
   data: Record<string, string>
+  defaultExpanded?: boolean
 }
 
-export function CaseDataCard({ data }: CaseDataCardProps) {
-  const [expanded, setExpanded] = useState(false)
+export function CaseDataCard({ data, defaultExpanded = false }: CaseDataCardProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
 
   if (!data || Object.keys(data).length === 0) {
     return (

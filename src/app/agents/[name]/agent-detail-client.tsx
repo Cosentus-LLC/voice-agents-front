@@ -1,46 +1,51 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
-  getAgent,
+  getAgentPrompt,
   getAgentSchema,
+  getLiveAgentForDraft,
   updateAgent,
   updateAgentPrompt,
-  getPostCallPrompt,
-  updatePostCallPrompt,
-  deleteAgent,
-  cloneAgent,
   getPhoneNumbers,
   updatePhoneNumber,
 } from "@/lib/api"
 import { supabase } from "@/lib/supabase"
-import type { AgentDraft, AgentSchema, AgentVersion } from "@/lib/types"
+import type { AgentDraft, AgentSchema, AgentVersion, PhoneNumber, PostCallField } from "@/lib/types"
 import {
   apiResponseToDraftRow,
   draftToApiPayload,
   extractPromptVariables,
   liveAgentToDraftRow,
 } from "@/lib/agent-draft"
-import { relativeTime } from "@/lib/utils"
+import { cn, formatPhoneNumberLabel, relativeTime } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -50,34 +55,41 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { AgentToolCard, AddToolMenu, formatAgentToolTypeLabel } from "@/components/agent-tool-editor"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { DeleteIconButton } from "@/components/delete-icon-button"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { AgentToolCard, AddToolMenu } from "@/components/agent-tool-editor"
+  SchemaSlider,
+  expressivenessRange,
+  llmMaxTokensRange,
+  promptCardClassName,
+  temperatureRange,
+  ttsSpeedRange,
+  voiceTemperatureRange,
+} from "@/components/agent-editor-fields"
 import { toast } from "sonner"
-import { ArrowLeft, ChevronDown, ChevronRight, Loader2, Pencil } from "lucide-react"
-
-const DAYS = [
-  { v: "mon", l: "Mon" },
-  { v: "tue", l: "Tue" },
-  { v: "wed", l: "Wed" },
-  { v: "thu", l: "Thu" },
-  { v: "fri", l: "Fri" },
-  { v: "sat", l: "Sat" },
-  { v: "sun", l: "Sun" },
-]
-
-function formatVoicemailLabel(action: string): string {
-  return action
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ")
-}
+import { AlertTriangle, ChevronRight, Clock, FileText, Info, List, Loader2, Lock, Pause, Pencil, Play, Plus } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { TestCallPanel } from "@/components/test-call-panel"
+import { VoicePicker, useResolvedVoice } from "@/components/voice-picker"
+import { useAudioPreview } from "@/hooks/use-audio-preview"
+import { AddVoiceModal } from "@/components/add-voice-modal"
+import { AgentConfigSection } from "@/components/agent-config-section"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { PostCallFieldEditor } from "@/components/post-call-field-editor"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
 function publishBody(draft: AgentDraft): Record<string, unknown> {
   const p = draftToApiPayload(draft)
@@ -89,21 +101,114 @@ function snapshotFromDraft(draft: AgentDraft): Record<string, unknown> {
   return { ...draftToApiPayload(draft), system_prompt: draft.system_prompt }
 }
 
+function errMessage(e: unknown): string {
+  if (e instanceof Error) return e.message
+  return String(e)
+}
+
+/** Normalize post_call_analyses from either old array or new object format */
+function extractPostCallInfo(pca: unknown): { model: string | null; fields: { name: string; type: string }[] } {
+  // New format: { model, fields: [{name, type, description, ...}] }
+  if (pca != null && typeof pca === "object" && !Array.isArray(pca)) {
+    const o = pca as Record<string, unknown>
+    if (Array.isArray(o.fields)) {
+      const model = typeof o.model === "string" && o.model.trim() ? o.model.trim() : null
+      const fields = o.fields.map((f: unknown) => {
+        const fo = f && typeof f === "object" ? (f as Record<string, unknown>) : {}
+        return {
+          name: typeof fo.name === "string" ? fo.name : "field",
+          type: typeof fo.type === "string" ? fo.type : "text",
+        }
+      })
+      return { model, fields }
+    }
+  }
+  // Old format: [{name, model, output_type, prompt?}]
+  if (Array.isArray(pca)) {
+    const firstModel = pca[0] && typeof pca[0] === "object" && typeof (pca[0] as Record<string, unknown>).model === "string"
+      ? ((pca[0] as Record<string, unknown>).model as string).trim() || null
+      : null
+    const fields = pca.map((item: unknown) => {
+      const o = item && typeof item === "object" ? (item as Record<string, unknown>) : {}
+      return {
+        name: typeof o.name === "string" ? o.name : "field",
+        type: typeof o.output_type === "string" ? o.output_type : "text",
+      }
+    })
+    return { model: firstModel, fields }
+  }
+  return { model: null, fields: [] }
+}
+
+/** Human-readable lines from stored `config_snapshot` for version history UI */
+function summarizeVersionSnapshot(snap: Record<string, unknown>) {
+  const tools = Array.isArray(snap.tools) ? snap.tools.length : 0
+  const pcaInfo = extractPostCallInfo(snap.post_call_analyses)
+  const postFields = pcaInfo.fields.length
+  const llm =
+    typeof snap.llm_model === "string" && snap.llm_model.trim() ? snap.llm_model.trim() : null
+  const voice =
+    typeof snap.tts_voice_id === "string" && snap.tts_voice_id.trim()
+      ? snap.tts_voice_id.trim()
+      : null
+  const displayName =
+    typeof snap.display_name === "string" && snap.display_name.trim()
+      ? snap.display_name.trim()
+      : typeof snap.name === "string" && snap.name.trim()
+        ? snap.name.trim()
+        : null
+  return { tools, postFields, pcaInfo, llm, voice, displayName }
+}
+
+function normalizeRoutePhoneId(id: string | null | undefined): string | null {
+  if (id == null || id === "" || id === "__none__") return null
+  return id
+}
+
+/** Compare server state vs desired selection; only include phones that need a PUT. */
+function buildPhoneAssignmentPutMap(
+  agentId: string,
+  curInboundPhoneId: string | null,
+  curOutboundPhoneId: string | null,
+  wantInboundPhoneId: string | null,
+  wantOutboundPhoneId: string | null
+): Map<string, Record<string, unknown>> {
+  const curIn = normalizeRoutePhoneId(curInboundPhoneId)
+  const curOut = normalizeRoutePhoneId(curOutboundPhoneId)
+  const wantIn = normalizeRoutePhoneId(wantInboundPhoneId)
+  const wantOut = normalizeRoutePhoneId(wantOutboundPhoneId)
+
+  const puts = new Map<string, Record<string, unknown>>()
+  const merge = (pid: string, patch: Record<string, unknown>) => {
+    puts.set(pid, { ...(puts.get(pid) ?? {}), ...patch })
+  }
+
+  if (curIn !== wantIn) {
+    if (curIn) merge(curIn, { inbound_agent_id: null })
+    if (wantIn) merge(wantIn, { inbound_agent_id: agentId })
+  }
+  if (curOut !== wantOut) {
+    if (curOut) merge(curOut, { outbound_agent_id: null })
+    if (wantOut) merge(wantOut, { outbound_agent_id: agentId })
+  }
+
+  return puts
+}
+
 export default function AgentDetailClient({ encodedName }: { encodedName: string }) {
-  const router = useRouter()
   const decodedName = decodeURIComponent(encodedName)
   const [draft, setDraft] = useState<AgentDraft | null>(null)
   const [schema, setSchema] = useState<AgentSchema | null>(null)
   const [versions, setVersions] = useState<AgentVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [missingDraft, setMissingDraft] = useState(false)
-  const [kwInput, setKwInput] = useState("")
 
   const [publishOpen, setPublishOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [versionName, setVersionName] = useState("")
   const [versionDesc, setVersionDesc] = useState("")
-  const [phones, setPhones] = useState<Awaited<ReturnType<typeof getPhoneNumbers>>>([])
+  const [publishModalPhones, setPublishModalPhones] = useState<PhoneNumber[]>([])
+  const [publishPhonesLoading, setPublishPhonesLoading] = useState(false)
   const [pubInboundOn, setPubInboundOn] = useState(false)
   const [pubOutboundOn, setPubOutboundOn] = useState(false)
   const [pubInboundId, setPubInboundId] = useState("")
@@ -111,16 +216,18 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
 
   const [discardOpen, setDiscardOpen] = useState(false)
   const [discarding, setDiscarding] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [cloneOpen, setCloneOpen] = useState(false)
-  const [cloneName, setCloneName] = useState("")
-  const [cloneDisplay, setCloneDisplay] = useState("")
-  const [cloning, setCloning] = useState(false)
-
-  const [postModal, setPostModal] = useState<{ name: string; content: string } | null>(null)
-  const [postSaving, setPostSaving] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<
+    | null
+    | { type: "tool"; index: number; label: string }
+    | { type: "postField"; index: number; label: string }
+  >(null)
+  const [editingField, setEditingField] = useState<{ index: number | null; field: PostCallField } | null>(null)
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  const configColumnRef = useRef<HTMLDivElement>(null)
+
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -144,7 +251,11 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
       }
 
       const d = row as AgentDraft
-      setDraft(d)
+      const normalized = apiResponseToDraftRow(d, {
+        agent_id: d.agent_id,
+        has_unpublished_changes: d.has_unpublished_changes,
+      }) as unknown as AgentDraft
+      setDraft(normalized)
 
       const { data: vers } = await supabase
         .from("agent_versions")
@@ -154,19 +265,9 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
 
       setVersions((vers as AgentVersion[]) ?? [])
 
-      const phoneList = await getPhoneNumbers().catch(() => [])
-      setPhones(phoneList.filter((p) => p.is_active !== false))
-
       const nextNum = vers?.length ? (vers as AgentVersion[])[0]!.version_number + 1 : 1
       setVersionName(`V${nextNum}`)
       setVersionDesc("")
-
-      const inbound = phoneList.find((p) => p.inbound_agent?.id === d.id || p.inbound_agent?.name === d.name)
-      const outbound = phoneList.find((p) => p.outbound_agent?.id === d.id || p.outbound_agent?.name === d.name)
-      setPubInboundOn(!!inbound)
-      setPubOutboundOn(!!outbound)
-      setPubInboundId(inbound?.id ?? "")
-      setPubOutboundId(outbound?.id ?? "")
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load")
     }
@@ -176,6 +277,41 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (!publishOpen || !draft) return
+    let cancelled = false
+    setPublishPhonesLoading(true)
+    void (async () => {
+      try {
+        const list = await getPhoneNumbers()
+        const active = list.filter((p) => p.is_active !== false)
+        if (cancelled) return
+        setPublishModalPhones(active)
+        const agentUuid = draft.agent_id
+        const inbound = active.find((p) => p.inbound_agent?.id === agentUuid)
+        const outbound = active.find((p) => p.outbound_agent?.id === agentUuid)
+        setPubInboundOn(!!inbound)
+        setPubOutboundOn(!!outbound)
+        setPubInboundId(inbound?.id ?? "")
+        setPubOutboundId(outbound?.id ?? "")
+      } catch (e) {
+        if (!cancelled) {
+          toast.error(errMessage(e))
+          setPublishModalPhones([])
+          setPubInboundOn(false)
+          setPubOutboundOn(false)
+          setPubInboundId("")
+          setPubOutboundId("")
+        }
+      } finally {
+        if (!cancelled) setPublishPhonesLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [publishOpen, draft?.agent_id])
 
   const patchDraft = useCallback(async (patch: Record<string, unknown>) => {
     let agentId: string | null = null
@@ -199,7 +335,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
 
   const initDraftFromLive = async () => {
     try {
-      const live = await getAgent(decodedName)
+      const live = await getLiveAgentForDraft(decodedName)
       const row = apiResponseToDraftRow(live, {
         agent_id: live.id,
         has_unpublished_changes: false,
@@ -220,7 +356,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
     if (!draft) return
     setDiscarding(true)
     try {
-      const live = await getAgent(decodedName)
+      const live = await getLiveAgentForDraft(decodedName)
       const row = liveAgentToDraftRow(live, draft.agent_id)
       const { error } = await supabase.from("agent_drafts").update(row).eq("agent_id", draft.agent_id)
       if (error) throw new Error(error.message)
@@ -235,90 +371,118 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
 
   const handlePublish = async () => {
     if (!draft) return
-    setPublishing(true)
-    try {
-      const body = publishBody(draft)
-      await updateAgent(decodedName, body)
-      await updateAgentPrompt(decodedName, draft.system_prompt)
+    if (publishPhonesLoading) return
 
-      const agentId = draft.id
-
-      if (pubInboundOn && pubInboundId) {
-        await updatePhoneNumber(pubInboundId, { inbound_agent_id: agentId })
-      }
-      if (pubOutboundOn && pubOutboundId) {
-        await updatePhoneNumber(pubOutboundId, { outbound_agent_id: agentId })
-      }
-
-      const nextNum = versions.length ? Math.max(...versions.map((x) => x.version_number)) + 1 : 1
-      const assignments: { number: string; friendly_name: string; direction: string }[] = []
-      if (pubInboundOn && pubInboundId) {
-        const p = phones.find((x) => x.id === pubInboundId)
-        if (p) assignments.push({ number: p.number, friendly_name: p.friendly_name, direction: "inbound" })
-      }
-      if (pubOutboundOn && pubOutboundId) {
-        const p = phones.find((x) => x.id === pubOutboundId)
-        if (p) assignments.push({ number: p.number, friendly_name: p.friendly_name, direction: "outbound" })
-      }
-
-      const { error: vErr } = await supabase.from("agent_versions").insert({
-        agent_id: draft.agent_id,
-        version_number: nextNum,
-        version_name: versionName.trim() || `V${nextNum}`,
-        description: versionDesc.trim(),
-        config_snapshot: snapshotFromDraft(draft),
-        phone_assignments: assignments,
-        published_at: new Date().toISOString(),
-        published_by: null,
-      })
-      if (vErr) throw new Error(vErr.message)
-
-      const { error: dErr } = await supabase
-        .from("agent_drafts")
-        .update({ has_unpublished_changes: false })
-        .eq("agent_id", draft.agent_id)
-      if (dErr) throw new Error(dErr.message)
-
-      toast.success(`Version ${versionName.trim() || `V${nextNum}`} published`)
-      setPublishOpen(false)
-      load()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Publish failed")
-    }
-    setPublishing(false)
-  }
-
-  const handleDelete = async () => {
-    setDeleting(true)
-    try {
-      await deleteAgent(decodedName)
-      toast.success("Agent deleted")
-      router.push("/agents")
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Delete failed")
-    }
-    setDeleting(false)
-  }
-
-  const handleClone = async () => {
-    if (!cloneName.trim() || !cloneDisplay.trim()) {
-      toast.error("Name and display name required")
+    if (pubInboundOn && !pubInboundId) {
+      toast.error("Select an inbound phone number or uncheck Inbound.")
       return
     }
-    setCloning(true)
-    try {
-      const created = await cloneAgent(decodedName, { name: cloneName.trim(), display_name: cloneDisplay.trim() })
-      const draftRow = apiResponseToDraftRow(created, {
-        agent_id: created.id,
-        has_unpublished_changes: false,
-      })
-      await supabase.from("agent_drafts").insert(draftRow)
-      toast.success("Agent cloned")
-      router.push(`/agents/${encodeURIComponent(created.name)}`)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Clone failed")
+    if (pubOutboundOn && !pubOutboundId) {
+      toast.error("Select an outbound phone number or uncheck Outbound.")
+      return
     }
-    setCloning(false)
+
+    setPublishing(true)
+    const issues: string[] = []
+
+    let livePromptBefore: string | undefined
+    try {
+      livePromptBefore = (await getAgentPrompt(decodedName)).content
+    } catch {
+      livePromptBefore = undefined
+    }
+
+    try {
+      await updateAgent(decodedName, publishBody(draft))
+    } catch (e) {
+      toast.error(errMessage(e))
+      setPublishing(false)
+      return
+    }
+
+    try {
+      const promptChanged =
+        livePromptBefore === undefined || livePromptBefore !== draft.system_prompt
+      if (promptChanged) {
+        await updateAgentPrompt(decodedName, draft.system_prompt)
+      }
+    } catch (e) {
+      toast.error(errMessage(e))
+      setPublishing(false)
+      return
+    }
+
+    const agentId = draft.agent_id
+
+    try {
+      const list = await getPhoneNumbers()
+      const active = list.filter((p) => p.is_active !== false)
+      const curInbound = active.find((p) => p.inbound_agent?.id === agentId)?.id ?? null
+      const curOutbound = active.find((p) => p.outbound_agent?.id === agentId)?.id ?? null
+      const wantInbound = pubInboundOn ? normalizeRoutePhoneId(pubInboundId) : null
+      const wantOutbound = pubOutboundOn ? normalizeRoutePhoneId(pubOutboundId) : null
+
+      const putMap = buildPhoneAssignmentPutMap(agentId, curInbound, curOutbound, wantInbound, wantOutbound)
+
+      const phoneErrors: string[] = []
+      for (const [phoneId, patch] of putMap) {
+        try {
+          await updatePhoneNumber(phoneId, patch)
+        } catch (e) {
+          phoneErrors.push(errMessage(e))
+        }
+      }
+      if (phoneErrors.length > 0) {
+        issues.push(`phone number assignment failed: ${phoneErrors[0]}`)
+      }
+    } catch (e) {
+      issues.push(`Could not sync phone numbers: ${errMessage(e)}`)
+    }
+
+    const nextNum = versions.length ? Math.max(...versions.map((x) => x.version_number)) + 1 : 1
+    const assignments: { number: string; friendly_name: string; direction: string }[] = []
+    if (pubInboundOn && pubInboundId) {
+      const p = publishModalPhones.find((x) => x.id === pubInboundId)
+      if (p) assignments.push({ number: p.number, friendly_name: p.friendly_name, direction: "inbound" })
+    }
+    if (pubOutboundOn && pubOutboundId) {
+      const p = publishModalPhones.find((x) => x.id === pubOutboundId)
+      if (p) assignments.push({ number: p.number, friendly_name: p.friendly_name, direction: "outbound" })
+    }
+
+    const { error: vErr } = await supabase.from("agent_versions").insert({
+      agent_id: draft.agent_id,
+      version_number: nextNum,
+      version_name: versionName.trim() || `V${nextNum}`,
+      description: versionDesc.trim(),
+      config_snapshot: snapshotFromDraft(draft),
+      phone_assignments: assignments,
+      published_at: new Date().toISOString(),
+      published_by: null,
+    })
+    if (vErr) {
+      issues.push(`Version history not saved: ${vErr.message}`)
+    }
+
+    const { error: dErr } = await supabase
+      .from("agent_drafts")
+      .update({ has_unpublished_changes: false })
+      .eq("agent_id", draft.agent_id)
+    if (dErr) {
+      issues.push(`Draft not marked published: ${dErr.message}`)
+    }
+
+    if (issues.length === 0) {
+      toast.success(`Version ${versionName.trim() || `V${nextNum}`} published`)
+    } else if (issues.length === 1 && issues[0].startsWith("phone number assignment failed:")) {
+      toast.warning(`Agent published, but ${issues[0]}`)
+    } else {
+      toast.warning(`Agent published, but: ${issues.join(" · ")}`)
+    }
+
+    setPublishOpen(false)
+    await load()
+    setPublishing(false)
   }
 
   const revertVersion = async (v: AgentVersion) => {
@@ -337,36 +501,42 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
   }
 
   const promptVars = useMemo(() => extractPromptVariables(draft?.system_prompt ?? ""), [draft?.system_prompt])
+  const { voice: resolvedVoice, voices: resolvedVoices, loaded: voicesLoaded } = useResolvedVoice(draft?.tts_voice_id ?? "")
+  const { playingId: voicePlayingId, toggle: toggleVoicePreview } = useAudioPreview()
+  const [addVoiceOpen, setAddVoiceOpen] = useState(false)
 
-  const openPostPrompt = async (analysisName: string) => {
-    try {
-      const data = await getPostCallPrompt(decodedName, analysisName)
-      setPostModal({ name: data.name, content: data.content })
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to load prompt")
-    }
-  }
-
-  const savePostPrompt = async () => {
-    if (!postModal) return
-    setPostSaving(true)
-    try {
-      await updatePostCallPrompt(decodedName, postModal.name, postModal.content)
-      toast.success("Post-call prompt saved")
-      setPostModal(null)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Save failed")
-    }
-    setPostSaving(false)
-  }
-
-  if (loading) {
+  if (loading || !voicesLoaded) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-36 w-full rounded-lg" />
-        ))}
+      <div className="flex h-[calc(100vh-3rem)] flex-col overflow-hidden">
+        <div className="surface-card mb-3 shrink-0 px-5 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <Skeleton className="h-7 w-56" />
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-9 w-24 rounded-lg" />
+              <Skeleton className="h-9 w-9 rounded-lg" />
+              <Skeleton className="h-9 w-9 rounded-lg" />
+            </div>
+          </div>
+        </div>
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-[minmax(0,49fr)_minmax(0,24fr)_minmax(0,27fr)]">
+          <div className="surface-card flex flex-col gap-3 p-4">
+            <div className="flex gap-4">
+              <Skeleton className="h-9 w-32" />
+              <Skeleton className="h-9 w-32" />
+              <Skeleton className="h-9 w-32" />
+            </div>
+            <Skeleton className="min-h-0 flex-1 rounded-lg" />
+          </div>
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-lg" />
+            ))}
+          </div>
+          <div className="space-y-3">
+            <Skeleton className="h-48 w-full rounded-lg" />
+            <Skeleton className="h-32 w-full rounded-lg" />
+          </div>
+        </div>
       </div>
     )
   }
@@ -374,11 +544,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
   if (missingDraft || !draft || !schema) {
     return (
       <div className="space-y-4">
-        <Link href="/agents" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft size={16} />
-          Agents
-        </Link>
-        <div className="rounded-lg border border-dashed p-8 text-center">
+        <div className="surface-card p-8 text-center">
           <p className="text-muted-foreground">No draft row found for this agent.</p>
           <Button className="mt-4" onClick={initDraftFromLive}>
             Initialize draft from live config
@@ -389,70 +555,586 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
   }
 
   const fr = schema.field_ranges
+  const tempRange = temperatureRange(fr)
+  const mtRange = llmMaxTokensRange(fr)
+  const speedRange = ttsSpeedRange(fr)
+  const voiceTempRange = voiceTemperatureRange(fr)
+  const exprRange = expressivenessRange(fr)
+
   const setF = (patch: Record<string, unknown>) => {
     void patchDraft(patch)
   }
 
   return (
-    <div className="space-y-6 pb-16">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <Link href="/agents" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft size={16} />
-            Agents
-          </Link>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+    <div className="flex h-[calc(100vh-3rem)] flex-col overflow-hidden">
+      {/* Top bar — compact surface card */}
+      <div className="surface-card mb-3 shrink-0 px-5 py-3">
+        {/* Row 1: Name + actions */}
+        <div className="flex items-center justify-between gap-4">
+          {editingName ? (
             <Input
-              className="h-auto max-w-xl border-0 border-b border-transparent px-0 py-1 text-2xl font-semibold tracking-tight shadow-none focus-visible:border-border focus-visible:ring-0"
+              ref={nameInputRef}
+              className="h-auto max-w-none border-0 border-b border-border bg-transparent px-0 py-0.5 text-xl font-semibold tracking-tight shadow-none focus-visible:ring-0 lg:max-w-3xl"
               value={draft.display_name}
               onChange={(e) => void patchDraft({ display_name: e.target.value })}
+              onBlur={() => setEditingName(false)}
+              onKeyDown={(e) => { if (e.key === "Enter") setEditingName(false) }}
+              aria-label="Display name"
+              autoFocus
             />
+          ) : (
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-xl font-semibold tracking-tight">{draft.display_name}</h1>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+                title="Edit name"
+                onClick={() => {
+                  setEditingName(true)
+                  setTimeout(() => nameInputRef.current?.focus(), 0)
+                }}
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="bg-white hover:bg-[var(--color-brand-light)]/60"
+              title="Version history"
+              aria-label="Version history"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <Clock className="size-4" />
+            </Button>
+            <span className="relative inline-flex">
+              {draft.has_unpublished_changes && (
+                <span
+                  className="absolute -top-1 -right-1 z-10 size-2 rounded-full bg-amber-400 ring-2 ring-[#f4f5f7] shadow-sm"
+                  title="Unpublished draft changes"
+                  aria-hidden
+                />
+              )}
+              <Button
+                size="sm"
+                disabled={!draft.has_unpublished_changes}
+                className="bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
+                title={
+                  draft.has_unpublished_changes
+                    ? "Publish draft — replaces live agent"
+                    : "No unpublished changes"
+                }
+                onClick={() => setPublishOpen(true)}
+              >
+                Publish
+              </Button>
+            </span>
             {draft.has_unpublished_changes && (
-              <Badge className="border-amber-300 bg-amber-50 text-amber-900">Draft — unpublished changes</Badge>
+              <Button type="button" variant="destructive" size="sm" onClick={() => setDiscardOpen(true)}>
+                Discard
+              </Button>
             )}
           </div>
-          <Textarea
-            className="mt-2 min-h-[60px] resize-none border-0 bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0"
-            placeholder="Description"
-            value={draft.description}
-            onChange={(e) => void patchDraft({ description: e.target.value })}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={!draft.has_unpublished_changes}
-            className="bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
-            onClick={() => setPublishOpen(true)}
-          >
-            Publish
-          </Button>
-          {draft.has_unpublished_changes && (
-            <Button variant="outline" onClick={() => setDiscardOpen(true)}>
-              Discard draft
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => setCloneOpen(true)}>
-            Clone
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
-            Delete
-          </Button>
         </div>
       </div>
 
-      <div className="grid max-w-4xl gap-6">
-        {/* LLM */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Language model</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label>Model</Label>
-                <Select value={draft.llm_model} onValueChange={(v) => setF({ llm_model: v ?? "" })}>
-                  <SelectTrigger>
-                    <SelectValue />
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent side="right" resizable defaultWidth={780} minWidth={380} maxWidthPercent={55} className="flex w-full flex-col overflow-hidden sm:max-w-lg">
+          <SheetHeader className="shrink-0 space-y-3 px-6 pt-6 pb-2 text-left">
+            <SheetTitle className="text-lg font-semibold tracking-tight">Version history</SheetTitle>
+            <SheetDescription className="text-[15px] leading-relaxed text-foreground/85">
+              Published snapshots you can review or restore as a draft.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-2">
+            {versions.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-black/[0.08] bg-secondary/30 px-4 py-10 text-center">
+                <p className="text-sm font-medium text-foreground">No published versions yet</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Publish your agent to create the first snapshot in history.
+                </p>
+              </div>
+            ) : (
+              versions.map((v) => {
+                const snap = (v.config_snapshot ?? {}) as Record<string, unknown>
+                const sum = summarizeVersionSnapshot(snap)
+                const isOpen = expandedVersionId === v.id
+                return (
+                  <Collapsible
+                    key={v.id}
+                    open={isOpen}
+                    onOpenChange={(open) => setExpandedVersionId(open ? v.id : null)}
+                  >
+                    <div
+                      className={cn(
+                        "overflow-hidden rounded-xl bg-secondary/50 transition-colors",
+                        isOpen && "bg-secondary/60"
+                      )}
+                    >
+                      <CollapsibleTrigger
+                        className={cn(
+                          "group flex w-full flex-col gap-2.5 px-4 py-4 text-left outline-none transition-colors",
+                          "hover:bg-secondary/40",
+                          "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2"
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <ChevronRight
+                            className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[panel-open]:rotate-90"
+                            aria-hidden
+                          />
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <div className="flex flex-wrap items-baseline justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-md bg-[var(--color-brand-light)] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-brand)]">
+                                  V{v.version_number}
+                                </span>
+                                {(() => {
+                                  const raw = v.version_name?.trim() ?? ""
+                                  if (raw && raw !== `V${v.version_number}`) {
+                                    return (
+                                      <span className="text-sm font-semibold text-foreground">{raw}</span>
+                                    )
+                                  }
+                                  return (
+                                    <span className="text-sm font-medium text-muted-foreground">
+                                      Published snapshot
+                                    </span>
+                                  )
+                                })()}
+                              </div>
+                              <time
+                                className="shrink-0 text-xs tabular-nums text-muted-foreground"
+                                dateTime={v.published_at}
+                              >
+                                {relativeTime(v.published_at)}
+                              </time>
+                            </div>
+                            {v.description?.trim() ? (
+                              <p className="text-sm leading-relaxed text-muted-foreground">{v.description.trim()}</p>
+                            ) : (
+                              <p className="text-sm italic text-muted-foreground/70">No release notes</p>
+                            )}
+                          </div>
+                        </div>
+                        {v.phone_assignments && v.phone_assignments.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 pl-7">
+                            {v.phone_assignments.map((p, i) => (
+                              <Badge
+                                key={i}
+                                variant="secondary"
+                                className="bg-white font-normal text-xs text-foreground"
+                              >
+                                <span className="font-medium capitalize text-muted-foreground">
+                                  {p.direction}
+                                </span>
+                                <span className="mx-1 text-muted-foreground">·</span>
+                                {formatPhoneNumberLabel(p)}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : null}
+                      </CollapsibleTrigger>
+
+                      <CollapsibleContent>
+                        <div className="space-y-4 px-4 pb-4 pt-1">
+                          <div className="rounded-lg bg-white px-3.5 py-3">
+                            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                              Published configuration
+                            </p>
+                            <dl className="grid grid-cols-1 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
+                              {sum.displayName ? (
+                                <>
+                                  <dt className="text-muted-foreground">Display name</dt>
+                                  <dd className="font-medium text-foreground">{sum.displayName}</dd>
+                                </>
+                              ) : null}
+                              <dt className="text-muted-foreground">LLM</dt>
+                              <dd className="font-mono text-xs text-foreground">{sum.llm ?? "—"}</dd>
+                              {sum.voice ? (
+                                <>
+                                  <dt className="text-muted-foreground">Voice ID</dt>
+                                  <dd className="break-all font-mono text-xs text-foreground">{sum.voice}</dd>
+                                </>
+                              ) : null}
+                              <dt className="text-muted-foreground">Tools</dt>
+                              <dd className="text-foreground">{sum.tools} configured</dd>
+                              <dt className="text-muted-foreground">Post-call fields</dt>
+                              <dd className="text-foreground">{sum.postFields} field{sum.postFields !== 1 ? "s" : ""}</dd>
+                              {sum.pcaInfo.model ? (
+                                <>
+                                  <dt className="text-muted-foreground">Post-call model</dt>
+                                  <dd className="font-mono text-xs text-foreground">{sum.pcaInfo.model}</dd>
+                                </>
+                              ) : null}
+                            </dl>
+                            {sum.pcaInfo.fields.length > 0 ? (
+                              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                                {sum.pcaInfo.fields.map((f, fi) => (
+                                  <span key={fi} className="rounded-md bg-secondary/80 px-2 py-0.5 text-xs text-foreground">
+                                    {f.name} <span className="text-muted-foreground">({f.type})</span>
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+
+                          {typeof snap.system_prompt === "string" && snap.system_prompt.trim() ? (
+                            <div>
+                              <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                System prompt
+                              </p>
+                              <div className="max-h-72 overflow-y-auto rounded-lg bg-white">
+                                <pre className="px-3.5 py-3 text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+{snap.system_prompt.trim()}
+                                </pre>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <details className="overflow-hidden rounded-lg bg-white">
+                            <summary className="cursor-pointer select-none px-3.5 py-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground">
+                              Raw configuration (JSON)
+                            </summary>
+                            <div className="max-h-48 overflow-y-auto">
+                              <pre className="px-3.5 pb-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-foreground/80">
+{JSON.stringify(v.config_snapshot, null, 2)}
+                              </pre>
+                            </div>
+                          </details>
+
+                          <div className="flex items-center gap-3 pt-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="font-medium bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
+                              onClick={() => {
+                                void revertVersion(v)
+                                setHistoryOpen(false)
+                              }}
+                            >
+                              Revert draft to this version
+                            </Button>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground">
+                              Updates your draft only. Publish when ready.
+                            </p>
+                          </div>
+                        </div>
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                )
+              })
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Three-pillar grid — fills remaining height, no page scroll */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-[minmax(0,49fr)_minmax(0,24fr)_minmax(0,27fr)]">
+        {/* Left column — Prompt editor */}
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <Card className={cn(promptCardClassName(), "flex min-h-0 flex-1 flex-col")}>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3 pb-3">
+              <div className="flex shrink-0 items-end gap-4">
+                <div className="flex min-w-0 flex-[3] flex-col gap-1.5">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">LLM Model</span>
+                  <Select value={draft.llm_model} onValueChange={(v) => setF({ llm_model: v ?? "" })}>
+                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-[var(--color-brand-light)]/60" aria-label="LLM model">
+                      <span className="flex min-w-0 items-center gap-1.5 truncate">
+                        <img src="/anthropic-logo.svg" alt="" className="size-3.5 shrink-0" />
+                        <span className="min-w-0 truncate"><SelectValue placeholder="Model" /></span>
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {schema.llm_models.map((m) => (
+                        <SelectItem key={m} value={m}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex min-w-0 flex-[4] flex-col gap-1.5">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Voice</span>
+                  <VoicePicker
+                    value={draft.tts_voice_id}
+                    onChange={(id) => setF({ tts_voice_id: id })}
+                    className="w-full border-0 hover:bg-[var(--color-brand-light)]/60"
+                    initialVoices={resolvedVoices}
+                  />
+                </div>
+                <div className="flex min-w-0 flex-[3] flex-col gap-1.5">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">TTS Model</span>
+                  <Select value={draft.tts_model} onValueChange={(v) => setF({ tts_model: v ?? "" })}>
+                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-[var(--color-brand-light)]/60" aria-label="Voice model">
+                      <SelectValue placeholder="Voice model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(schema.tts_models[draft.tts_provider] ?? []).map((m) => (
+                        <SelectItem key={m} value={m}>{m}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Textarea
+                className="w-full min-w-0 flex-1 resize-none overflow-y-auto bg-white font-[JetBrains_Mono,monospace] text-sm leading-relaxed"
+                value={draft.system_prompt}
+                onChange={(e) => setF({ system_prompt: e.target.value })}
+                placeholder="You are a helpful assistant..."
+              />
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Center column — Config */}
+        <div
+          ref={configColumnRef}
+          id="agent-config-column"
+          className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+        >
+          <div className="surface-card divide-y divide-[#e8eaed] overflow-hidden">
+          <AgentConfigSection title="LLM">
+            <FieldGroup className="gap-5">
+              <p className="text-xs text-muted-foreground">
+                Provider: <span className="font-medium text-foreground">anthropic</span> · Model switch is in the bar above.
+              </p>
+            <SchemaSlider
+              label="Temperature"
+              helper="Controls response randomness. 0.7 is recommended for most agents."
+              value={draft.temperature}
+              onChange={(v) => setF({ temperature: v })}
+              range={tempRange}
+            />
+            <SchemaSlider
+              label="Max Response Tokens"
+              helper="Maximum tokens per response turn. Voice responses should be concise."
+              value={draft.max_tokens}
+              onChange={(v) => setF({ max_tokens: Math.round(v) })}
+              range={mtRange}
+            />
+            </FieldGroup>
+          </AgentConfigSection>
+
+          <AgentConfigSection title="Voice">
+            <FieldGroup className="gap-5">
+              <p className="text-xs text-muted-foreground">
+                Provider: <span className="font-medium text-foreground">elevenlabs</span> · Voice and model selectors are in the quick bar.
+              </p>
+            <SchemaSlider
+              label="Speed"
+              helper="How fast the agent speaks. 0.7 (slower) to 1.2 (faster)."
+              value={draft.tts_speed}
+              onChange={(v) => setF({ tts_speed: v })}
+              range={speedRange}
+              formatValue={(v) => `${Number(v).toFixed(2)}x`}
+            />
+            <SchemaSlider
+              label="Voice Consistency"
+              helper="How predictable the voice sounds."
+              helperTooltip="Lower values add natural variation but may introduce artifacts like breathing or pitch shifts. Higher values are cleaner and more professional. Recommended: 0.70–0.85."
+              value={draft.tts_stability}
+              onChange={(v) => setF({ tts_stability: v })}
+              range={voiceTempRange}
+            />
+            <div className="flex items-center gap-3 rounded-lg bg-secondary/60 px-4 py-3">
+              <Lock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <div>
+                <p className="text-sm font-medium">Similarity Boost: <span className="tabular-nums">0.8</span></p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Global setting — controlled by the pipeline, not per-agent.</p>
+              </div>
+            </div>
+            <SchemaSlider
+              label="Style"
+              helper="Amplifies vocal expressiveness."
+              helperTooltip="0 is neutral. Higher values add personality but may increase latency."
+              value={draft.tts_style}
+              onChange={(v) => setF({ tts_style: v })}
+              range={exprRange}
+            />
+            <Field
+              orientation="horizontal"
+              className="items-start gap-3 rounded-lg bg-secondary/60 p-4"
+            >
+              <Switch
+                id="agent-speaker-boost"
+                checked={draft.tts_use_speaker_boost}
+                onCheckedChange={(c) => setF({ tts_use_speaker_boost: !!c })}
+                className="mt-0.5"
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="agent-speaker-boost" className="inline-flex items-center gap-1.5">
+                  Voice Clarity Boost
+                  <Tooltip>
+                    <TooltipTrigger render={<button type="button" className="inline-flex shrink-0 text-muted-foreground/60 transition-colors hover:text-muted-foreground" />}>
+                      <Info size={13} />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[240px] leading-relaxed">
+                      Enhances voice crispness. Turn off for a more natural phone-call sound. Turn on for clearer, more polished enunciation.
+                    </TooltipContent>
+                  </Tooltip>
+                </FieldLabel>
+              </FieldContent>
+            </Field>
+            </FieldGroup>
+          </AgentConfigSection>
+
+          <AgentConfigSection title="Tools">
+            <FieldGroup className="gap-5">
+              <FieldDescription className="text-xs text-muted-foreground">
+                What the agent is allowed to do during a call (hang up, dial digits, transfer, etc.).
+              </FieldDescription>
+            <div className="space-y-4">
+              {draft.tools.map((tool, idx) => (
+                <AgentToolCard
+                  key={idx}
+                  tool={tool}
+                  onChange={(t) => {
+                    const next = [...draft.tools]
+                    next[idx] = t
+                    setF({ tools: next })
+                  }}
+                  onRemove={() =>
+                    setPendingDelete({
+                      type: "tool",
+                      index: idx,
+                      label: formatAgentToolTypeLabel(draft.tools[idx]!.type),
+                    })
+                  }
+                />
+              ))}
+              <AddToolMenu
+                schema={schema}
+                existing={draft.tools.map((t) => t.type)}
+                onAdd={(type) => {
+                  const desc =
+                    (schema.tool_settings_schema as Record<string, { description?: string }>)?.[type]?.description ?? ""
+                  setF({
+                    tools: [
+                      ...draft.tools,
+                      { type, description: typeof desc === "string" ? desc : "", settings: {} },
+                    ],
+                  })
+                }}
+              />
+            </div>
+            </FieldGroup>
+          </AgentConfigSection>
+
+          <AgentConfigSection title="Post-Call Data Extraction">
+            <FieldGroup className="gap-3">
+              <FieldDescription className="text-xs">
+                Define the information to extract from each call.
+              </FieldDescription>
+
+              <div className="space-y-2">
+                {draft.post_call_analyses.fields.length > 0 && (
+                  draft.post_call_analyses.fields.map((f, i) => (
+                    <div
+                      key={`${f.name}-${i}`}
+                      className="rounded-lg bg-white p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <div className="flex h-5 shrink-0 items-center text-muted-foreground">
+                            {f.type === "selector" ? (
+                              <List className="size-4" aria-hidden />
+                            ) : (
+                              <FileText className="size-4" aria-hidden />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium leading-5 truncate block">{f.name}</span>
+                            {f.description ? (
+                              <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                                {f.description}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            title="Edit"
+                            onClick={() => setEditingField({ index: i, field: { ...f } })}
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                          <DeleteIconButton
+                            title="Delete field"
+                            onClick={() =>
+                              setPendingDelete({
+                                type: "postField",
+                                index: i,
+                                label: f.name || "this field",
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" size="sm" className="h-8">
+                      <Plus className="mr-1.5 size-4" aria-hidden />
+                      Add
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        setEditingField({
+                          index: null,
+                          field: { name: "", type: "text", description: "", format_examples: [] },
+                        })
+                      }
+                    >
+                      <FileText className="size-4" aria-hidden />
+                      Text
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        Free-form text output
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        setEditingField({
+                          index: null,
+                          field: { name: "", type: "selector", description: "", choices: [""] },
+                        })
+                      }
+                    >
+                      <List className="size-4" aria-hidden />
+                      Selector
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        Choose from predefined options
+                      </span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs text-muted-foreground">Model</Label>
+                <Select
+                  value={draft.post_call_analyses.model}
+                  onValueChange={(v) =>
+                    setF({ post_call_analyses: { ...draft.post_call_analyses, model: v ?? "" } })
+                  }
+                >
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select model" />
                   </SelectTrigger>
                   <SelectContent>
                     {schema.llm_models.map((m) => (
@@ -463,637 +1145,311 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-2 pt-6">
-                <Switch
-                  checked={draft.enable_prompt_caching}
-                  onCheckedChange={(c) => setF({ enable_prompt_caching: !!c })}
-                />
-                <Label>Prompt caching</Label>
-              </div>
-            </div>
-            {fr.temperature && (
-              <SliderField
-                label="Temperature"
-                value={draft.temperature}
-                range={fr.temperature}
-                onChange={(v) => setF({ temperature: v })}
-              />
-            )}
-            {fr.max_tokens && (
-              <SliderField
-                label="Max tokens"
-                value={draft.max_tokens}
-                range={fr.max_tokens}
-                onChange={(v) => setF({ max_tokens: Math.round(v) })}
-              />
-            )}
-          </CardContent>
-        </Card>
+            </FieldGroup>
+          </AgentConfigSection>
+          </div>
+        </div>
 
-        {/* TTS */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Text-to-speech</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Readonly label="Provider" value={draft.tts_provider} />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label>Voice ID</Label>
-                <Input
-                  className="font-mono text-xs"
-                  value={draft.tts_voice_id}
-                  onChange={(e) => setF({ tts_voice_id: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Model</Label>
-                <Select value={draft.tts_model} onValueChange={(v) => setF({ tts_model: v ?? "" })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(schema.tts_models[draft.tts_provider] ?? []).map((m) => (
-                      <SelectItem key={m} value={m}>
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {fr.tts_stability && (
-                <SliderField label="Stability" value={draft.tts_stability} range={fr.tts_stability} onChange={(v) => setF({ tts_stability: v })} />
-              )}
-              {fr.tts_similarity_boost && (
-                <SliderField
-                  label="Similarity boost"
-                  value={draft.tts_similarity_boost}
-                  range={fr.tts_similarity_boost}
-                  onChange={(v) => setF({ tts_similarity_boost: v })}
-                />
-              )}
-              {fr.tts_style && (
-                <SliderField label="Style" value={draft.tts_style} range={fr.tts_style} onChange={(v) => setF({ tts_style: v })} />
-              )}
-              {fr.tts_speed && (
-                <SliderField label="Speed" value={draft.tts_speed} range={fr.tts_speed} onChange={(v) => setF({ tts_speed: v })} />
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={draft.tts_use_speaker_boost} onCheckedChange={(c) => setF({ tts_use_speaker_boost: !!c })} />
-              <Label>Speaker boost</Label>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Right column — Test panel */}
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <TestCallPanel
+            agentName={draft.name}
+            displayName={draft.display_name}
+            isDraft={draft.has_unpublished_changes}
+            immediateStart={false}
+            promptVariables={promptVars}
+            validateBeforeStart={() => {
+              const missing: string[] = []
+              if (!draft.tts_voice_id?.trim()) missing.push("Voice")
+              if (!draft.system_prompt?.trim()) missing.push("System Prompt")
+              if (!draft.llm_model?.trim()) missing.push("LLM Model")
+              if (missing.length > 0) {
+                toast.error(`Configure ${missing.join(", ")} before testing`)
+                return false
+              }
+              return true
+            }}
+            className="min-h-0 flex-1"
+          />
+        </div>
+      </div>
+      {/* Publish dialog */}
+      <Dialog
+        open={publishOpen}
+        onOpenChange={(open) => {
+          setPublishOpen(open)
+          if (!open) {
+            setPublishModalPhones([])
+            setPublishPhonesLoading(false)
+            setPubInboundOn(false)
+            setPubOutboundOn(false)
+            setPubInboundId("")
+            setPubOutboundId("")
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[min(90dvh,720px)] flex-col gap-0 overflow-hidden sm:max-w-lg">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
+            <div className="space-y-5 pb-2">
+              <DialogHeader className="space-y-3 text-left">
+                <DialogTitle className="text-lg font-semibold tracking-tight">Publish version</DialogTitle>
+                <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
+                  Push your draft to live for{" "}
+                  <span className="font-medium text-foreground">
+                    {draft?.display_name?.trim() || decodedName}
+                  </span>{" "}
+                  and record a named version in history.
+                </DialogDescription>
+              </DialogHeader>
 
-        {/* STT */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Speech-to-text</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Readonly label="Provider" value={draft.stt_provider} />
-            <div className="space-y-1">
-              <Label>Language</Label>
-              <Select value={draft.stt_language} onValueChange={(v) => setF({ stt_language: v ?? "" })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {schema.stt_languages.map((l) => (
-                    <SelectItem key={l} value={l}>
-                      {l}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Keywords</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {draft.stt_keywords.map((k) => (
-                  <Badge key={k} variant="secondary" className="gap-1 pr-1">
-                    {k}
-                    <button
-                      type="button"
-                      className="rounded p-0.5 hover:bg-muted"
-                      onClick={() => setF({ stt_keywords: draft.stt_keywords.filter((x) => x !== k) })}
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                ))}
+              <div className="rounded-xl border border-black/[0.06] bg-secondary/50 px-4 py-4">
+                <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Version details
+                </p>
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label>Version name</Label>
+                    <Input
+                      value={versionName}
+                      onChange={(e) => setVersionName(e.target.value)}
+                      placeholder="V2 — Updated prompt"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Description</Label>
+                    <Textarea
+                      value={versionDesc}
+                      onChange={(e) => setVersionDesc(e.target.value)}
+                      rows={2}
+                      className="min-h-[4.5rem] resize-y"
+                    />
+                  </div>
+                </div>
               </div>
-              <Input
-                placeholder="Keyword, Enter"
-                value={kwInput}
-                onChange={(e) => setKwInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault()
-                    const t = kwInput.trim()
-                    if (t && !draft.stt_keywords.includes(t)) setF({ stt_keywords: [...draft.stt_keywords, t] })
-                    setKwInput("")
-                  }
-                }}
-              />
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Tools */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Tools</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {draft.tools.map((tool, idx) => (
-              <AgentToolCard
-                key={idx}
-                tool={tool}
-                onChange={(t) => {
-                  const next = [...draft.tools]
-                  next[idx] = t
-                  setF({ tools: next })
-                }}
-                onRemove={() => setF({ tools: draft.tools.filter((_, i) => i !== idx) })}
-              />
-            ))}
-            <AddToolMenu
-              schema={schema}
-              existing={draft.tools.map((t) => t.type)}
-              onAdd={(type) => {
-                const desc =
-                  (schema.tool_settings_schema as Record<string, { description?: string }>)?.[type]?.description ?? ""
-                setF({
-                  tools: [
-                    ...draft.tools,
-                    { type, description: typeof desc === "string" ? desc : "", settings: {} },
-                  ],
-                })
-              }}
-            />
-          </CardContent>
-        </Card>
-
-        {/* Prompt */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">System prompt</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {promptVars.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {promptVars.map((v) => (
-                  <Badge key={v} variant="outline" className="font-mono text-xs">{`{{${v}}}`}</Badge>
-                ))}
-              </div>
-            )}
-            <Textarea
-              className="min-h-[320px] font-mono text-xs"
-              value={draft.system_prompt}
-              onChange={(e) => setF({ system_prompt: e.target.value })}
-            />
-            <div className="space-y-1">
-              <Label>First message</Label>
-              <Textarea value={draft.first_message} onChange={(e) => setF({ first_message: e.target.value })} rows={2} />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Call behavior */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Call behavior</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {fr.idle_timeout_secs && (
-              <SliderField
-                label="Idle timeout"
-                value={draft.idle_timeout_secs}
-                range={fr.idle_timeout_secs}
-                onChange={(v) => setF({ idle_timeout_secs: Math.round(v) })}
-                formatDisplay={(v) => `${v} seconds`}
-              />
-            )}
-            <div className="space-y-1">
-              <Label>Idle message</Label>
-              <Input value={draft.idle_message} onChange={(e) => setF({ idle_message: e.target.value })} />
-            </div>
-            {fr.max_call_duration_secs && (
-              <SliderField
-                label="Max call duration"
-                value={draft.max_call_duration_secs}
-                range={fr.max_call_duration_secs}
-                onChange={(v) => setF({ max_call_duration_secs: Math.round(v) })}
-                formatDisplay={(v) => `${Math.round(v / 60)} minutes`}
-              />
-            )}
-            <div className="space-y-1">
-              <Label>Voicemail</Label>
-              <Select value={draft.voicemail_action} onValueChange={(v) => setF({ voicemail_action: v ?? "" })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {schema.voicemail_actions.map((a) => (
-                    <SelectItem key={a} value={a}>
-                      {formatVoicemailLabel(a)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {draft.voicemail_action === "leave_message" && (
-              <div className="space-y-1">
-                <Label>Voicemail message</Label>
-                <Textarea value={draft.voicemail_message} onChange={(e) => setF({ voicemail_message: e.target.value })} rows={3} />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Post-call */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Post-call analyses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Model</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead className="w-[120px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {draft.post_call_analyses.map((row, i) => (
-                  <TableRow key={row.name}>
-                    <TableCell className="font-medium">{row.name}</TableCell>
-                    <TableCell>
-                      <Select
-                        value={row.model}
-                        onValueChange={(v) => {
-                          const n = [...draft.post_call_analyses]
-                          n[i] = { ...n[i]!, model: v ?? "" }
-                          setF({ post_call_analyses: n })
+              <div className="rounded-xl border border-black/[0.06] bg-secondary/50 px-4 py-4">
+                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Phone assignment
+                </p>
+                <p className="mb-4 text-sm leading-relaxed text-muted-foreground">
+                  Optional. You can publish without assigning numbers.
+                </p>
+                {publishPhonesLoading ? (
+                  <div className="flex items-center gap-2 py-1 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                    Loading phone numbers…
+                  </div>
+                ) : publishModalPhones.length === 0 ? (
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    No phone numbers configured. Add numbers on the{" "}
+                    <Link href="/phone-numbers" className="font-medium text-primary underline underline-offset-4">
+                      Phone Numbers
+                    </Link>{" "}
+                    page.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={pubInboundOn}
+                        onCheckedChange={(c) => {
+                          const on = !!c
+                          setPubInboundOn(on)
+                          if (!on) setPubInboundId("")
                         }}
+                        id="pub-in"
+                      />
+                      <Label htmlFor="pub-in">Inbound phone number</Label>
+                    </div>
+                    {pubInboundOn && (
+                      <Select
+                        value={pubInboundId || "__none__"}
+                        onValueChange={(v) => setPubInboundId((v ?? "") === "__none__" ? "" : (v ?? ""))}
                       >
-                        <SelectTrigger className="h-8">
-                          <SelectValue />
+                        <SelectTrigger className="h-9 border border-black/[0.06] bg-background shadow-none hover:bg-background">
+                          <SelectValue placeholder="Select number" />
                         </SelectTrigger>
                         <SelectContent>
-                          {schema.llm_models.map((m) => (
-                            <SelectItem key={m} value={m}>
-                              {m}
+                          <SelectItem value="__none__">Select…</SelectItem>
+                          {publishModalPhones.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {formatPhoneNumberLabel(p)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-muted-foreground">{row.output_type}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="sm" onClick={() => openPostPrompt(row.name)}>
-                        <Pencil size={14} className="mr-1" />
-                        Prompt
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        {/* Recording */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Recording</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-6">
-            <div className="flex items-center gap-2">
-              <Switch checked={draft.recording_enabled} onCheckedChange={(c) => setF({ recording_enabled: !!c })} />
-              <Label>Enabled</Label>
-            </div>
-            <Readonly label="Channels" value={String(draft.recording_channels)} />
-          </CardContent>
-        </Card>
-
-        {/* Scheduling */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Scheduling</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {fr.default_concurrency && (
-              <SliderField
-                label="Default concurrency"
-                value={draft.default_concurrency}
-                range={fr.default_concurrency}
-                onChange={(v) => setF({ default_concurrency: Math.round(v) })}
-              />
-            )}
-            {fr.max_retries && (
-              <SliderField label="Max retries" value={draft.max_retries} range={fr.max_retries} onChange={(v) => setF({ max_retries: Math.round(v) })} />
-            )}
-            {fr.retry_delay_secs && (
-              <SliderField
-                label="Retry delay"
-                value={draft.retry_delay_secs}
-                range={fr.retry_delay_secs}
-                onChange={(v) => setF({ retry_delay_secs: Math.round(v) })}
-                formatDisplay={(v) => `${Math.round(v / 60)} minutes`}
-              />
-            )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label>Calling window start</Label>
-                <Input type="time" value={draft.calling_window_start} onChange={(e) => setF({ calling_window_start: e.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label>Calling window end</Label>
-                <Input type="time" value={draft.calling_window_end} onChange={(e) => setF({ calling_window_end: e.target.value })} />
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={pubOutboundOn}
+                        onCheckedChange={(c) => {
+                          const on = !!c
+                          setPubOutboundOn(on)
+                          if (!on) setPubOutboundId("")
+                        }}
+                        id="pub-out"
+                      />
+                      <Label htmlFor="pub-out">Outbound phone number</Label>
+                    </div>
+                    {pubOutboundOn && (
+                      <Select
+                        value={pubOutboundId || "__none__"}
+                        onValueChange={(v) => setPubOutboundId((v ?? "") === "__none__" ? "" : (v ?? ""))}
+                      >
+                        <SelectTrigger className="h-9 border border-black/[0.06] bg-background shadow-none hover:bg-background">
+                          <SelectValue placeholder="Select number" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Select…</SelectItem>
+                          {publishModalPhones.map((p) => (
+                            <SelectItem key={`o-${p.id}`} value={p.id}>
+                              {formatPhoneNumberLabel(p)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Calling days</Label>
-              <div className="flex flex-wrap gap-3">
-                {DAYS.map((d) => (
-                  <label key={d.v} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={draft.calling_window_days.includes(d.v)}
-                      onCheckedChange={(c) => {
-                        if (c) setF({ calling_window_days: [...draft.calling_window_days, d.v] })
-                        else setF({ calling_window_days: draft.calling_window_days.filter((x) => x !== d.v) })
-                      }}
-                    />
-                    {d.l}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Version history */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Version history</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {versions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No published versions yet.</p>
-            ) : (
-              versions.map((v) => (
-                <div key={v.id} className="rounded-lg border">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 p-3 text-left hover:bg-muted/50"
-                    onClick={() => setExpandedVersionId(expandedVersionId === v.id ? null : v.id)}
-                  >
-                    {expandedVersionId === v.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">
-                        V{v.version_number} — {v.version_name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{v.description || "—"}</p>
-                    </div>
-                    <span className="text-xs text-muted-foreground">{relativeTime(v.published_at)}</span>
-                  </button>
-                  {v.phone_assignments?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 px-3 pb-2">
-                      {v.phone_assignments.map((p, i) => (
-                        <Badge key={i} variant="secondary" className="text-xs">
-                          {p.direction}: {p.friendly_name || p.number}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {expandedVersionId === v.id && (
-                    <div className="border-t p-3">
-                      <pre className="max-h-64 overflow-auto rounded-md bg-muted/50 p-3 text-xs whitespace-pre-wrap">
-                        {JSON.stringify(v.config_snapshot, null, 2)}
-                      </pre>
-                      <Button className="mt-2" variant="outline" size="sm" onClick={() => revertVersion(v)}>
-                        Revert to this version
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Publish dialog */}
-      <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Publish version</DialogTitle>
-            <DialogDescription>Push draft to live and record a version.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label>Version name</Label>
-              <Input value={versionName} onChange={(e) => setVersionName(e.target.value)} placeholder="V2 — Updated prompt" />
-            </div>
-            <div className="space-y-1">
-              <Label>Description</Label>
-              <Textarea value={versionDesc} onChange={(e) => setVersionDesc(e.target.value)} rows={2} />
-            </div>
-            <Separator />
-            <div>
-              <p className="text-sm font-medium">Phone number assignment</p>
-              <p className="text-xs text-muted-foreground">Optional. You can publish without assigning numbers.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox checked={pubInboundOn} onCheckedChange={(c) => setPubInboundOn(!!c)} id="pub-in" />
-              <Label htmlFor="pub-in">Inbound phone number</Label>
-            </div>
-            {pubInboundOn && (
-              <Select
-                value={pubInboundId || "__none__"}
-                onValueChange={(v) => setPubInboundId((v ?? "") === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select number" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Select…</SelectItem>
-                  {phones.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.friendly_name || p.number}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <div className="flex items-center gap-2">
-              <Checkbox checked={pubOutboundOn} onCheckedChange={(c) => setPubOutboundOn(!!c)} id="pub-out" />
-              <Label htmlFor="pub-out">Outbound phone number</Label>
-            </div>
-            {pubOutboundOn && (
-              <Select
-                value={pubOutboundId || "__none__"}
-                onValueChange={(v) => setPubOutboundId((v ?? "") === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select number" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Select…</SelectItem>
-                  {phones.map((p) => (
-                    <SelectItem key={`o-${p.id}`} value={p.id}>
-                      {p.friendly_name || p.number}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPublishOpen(false)} disabled={publishing}>
+
+          <div className="-mx-6 -mb-6 mt-2 flex shrink-0 gap-3 rounded-b-2xl bg-secondary/20 px-6 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 basis-0 justify-center"
+              onClick={() => setPublishOpen(false)}
+              disabled={publishing}
+            >
               Cancel
             </Button>
             <Button
-              className="bg-[var(--color-brand)] text-white"
-              onClick={handlePublish}
-              disabled={publishing}
+              type="button"
+              className="flex-1 basis-0 justify-center font-medium bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
+              onClick={() => void handlePublish()}
+              disabled={publishing || publishPhonesLoading}
             >
               {publishing ? <Loader2 className="animate-spin" size={16} /> : "Publish"}
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Discard draft?</DialogTitle>
-            <DialogDescription>
-              This resets the draft to the last published live configuration. Unpublished edits will be lost.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDiscardOpen(false)} disabled={discarding}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDiscard} disabled={discarding}>
-              {discarding ? <Loader2 className="animate-spin" size={16} /> : "Discard"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <DialogContent className="gap-0 overflow-hidden sm:max-w-[440px]">
+          <div className="space-y-4 pb-2">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-lg font-semibold tracking-tight">Discard draft?</DialogTitle>
+              <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
+                This resets the draft for{" "}
+                <span className="font-medium text-foreground">
+                  {draft?.display_name?.trim() || decodedName}
+                </span>{" "}
+                to match the last published live configuration. Unpublished edits will be lost.
+              </DialogDescription>
+            </DialogHeader>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete agent?</DialogTitle>
-            <DialogDescription>This soft-deletes the agent on the server.</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-              {deleting ? <Loader2 className="animate-spin" size={16} /> : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Clone agent</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <div className="space-y-1">
-              <Label>New agent name (path)</Label>
-              <Input className="font-mono text-sm" value={cloneName} onChange={(e) => setCloneName(e.target.value)} placeholder="team/new_agent" />
-            </div>
-            <div className="space-y-1">
-              <Label>Display name</Label>
-              <Input value={cloneDisplay} onChange={(e) => setCloneDisplay(e.target.value)} />
+            <div className="rounded-xl border border-black/[0.06] bg-secondary/50 px-4 py-3.5">
+              <p className="mb-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                What happens next
+              </p>
+              <ul className="list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/75 marker:text-muted-foreground/60">
+                <li>Prompt, voice, tools, and all draft fields revert to the live agent</li>
+                <li>Changes you have not published are removed from this draft</li>
+                <li className="font-medium text-foreground/90">This cannot be undone</li>
+              </ul>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCloneOpen(false)} disabled={cloning}>
+
+          <div className="-mx-6 -mb-6 mt-2 flex gap-3 rounded-b-2xl bg-secondary/20 px-6 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 basis-0 justify-center"
+              onClick={() => setDiscardOpen(false)}
+              disabled={discarding}
+            >
               Cancel
             </Button>
-            <Button onClick={handleClone} disabled={cloning}>
-              {cloning ? <Loader2 className="animate-spin" size={16} /> : "Clone"}
+            <Button
+              type="button"
+              variant="destructive"
+              className="flex-1 basis-0 justify-center font-medium"
+              onClick={() => void handleDiscard()}
+              disabled={discarding}
+            >
+              {discarding ? <Loader2 className="animate-spin" size={16} /> : "Discard draft"}
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!postModal} onOpenChange={(o) => !o && setPostModal(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Post-call prompt — {postModal?.name}</DialogTitle>
-          </DialogHeader>
-          <Textarea
-            className="min-h-[360px] font-mono text-xs"
-            value={postModal?.content ?? ""}
-            onChange={(e) => postModal && setPostModal({ ...postModal, content: e.target.value })}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPostModal(null)} disabled={postSaving}>
-              Cancel
-            </Button>
-            <Button className="bg-[var(--color-brand)] text-white" onClick={savePostPrompt} disabled={postSaving}>
-              {postSaving ? <Loader2 className="animate-spin" size={16} /> : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null)
+        }}
+        title={
+          pendingDelete?.type === "tool"
+            ? "Remove tool?"
+            : pendingDelete?.type === "postField"
+              ? "Delete field?"
+              : "Are you sure?"
+        }
+        description={
+          pendingDelete?.type === "tool" ? (
+            <>
+              Remove <span className="font-medium text-foreground">{pendingDelete.label}</span> from this agent
+              draft?
+            </>
+          ) : pendingDelete?.type === "postField" ? (
+            <>
+              Delete post-call field{" "}
+              <span className="font-medium text-foreground">{pendingDelete.label}</span>? This only updates your
+              draft until you publish.
+            </>
+          ) : null
+        }
+        bullets={
+          pendingDelete
+            ? [
+                "The change applies to this draft only until you publish.",
+                "You can use Discard draft to revert all unpublished edits at once.",
+              ]
+            : undefined
+        }
+        confirmLabel={pendingDelete?.type === "tool" ? "Remove" : "Delete"}
+        onConfirm={() => {
+          if (!pendingDelete || !draft) return
+          if (pendingDelete.type === "tool") {
+            setF({ tools: draft.tools.filter((_, j) => j !== pendingDelete.index) })
+          } else {
+            setF({
+              post_call_analyses: {
+                ...draft.post_call_analyses,
+                fields: draft.post_call_analyses.fields.filter((_, j) => j !== pendingDelete.index),
+              },
+            })
+          }
+          setPendingDelete(null)
+        }}
+      />
 
-function Readonly({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="text-sm">{value}</p>
-    </div>
-  )
-}
-
-function SliderField({
-  label,
-  value,
-  range,
-  onChange,
-  formatDisplay,
-}: {
-  label: string
-  value: number
-  range: { min: number; max: number; step: number }
-  onChange: (v: number) => void
-  formatDisplay?: (v: number) => string
-}) {
-  const show = formatDisplay ? formatDisplay(value) : range.step < 1 ? value.toFixed(1) : String(Math.round(value))
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-between">
-        <Label className="text-xs text-muted-foreground">{label}</Label>
-        <span className="text-xs font-mono tabular-nums text-muted-foreground">{show}</span>
-      </div>
-      <Slider
-        value={[value ?? 0]}
-        min={range.min}
-        max={range.max}
-        step={range.step}
-        onValueChange={(v) => onChange(Array.isArray(v) ? v[0]! : v)}
+      <PostCallFieldEditor
+        open={!!editingField}
+        field={editingField?.field ?? null}
+        onCancel={() => setEditingField(null)}
+        onSave={(field) => {
+          const fields = draft.post_call_analyses.fields
+          const next = [...fields]
+          if (editingField?.index == null) next.push(field)
+          else next[editingField.index] = field
+          setF({ post_call_analyses: { ...draft.post_call_analyses, fields: next } })
+          setEditingField(null)
+        }}
       />
     </div>
   )

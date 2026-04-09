@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import type { Batch } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
-import { NewBatchModal } from "@/components/new-batch-modal"
 import { downloadResults } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
 import {
@@ -25,9 +25,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { MoreHorizontal, Eye, Download, FileSpreadsheet, Layers } from "lucide-react"
+import { MoreHorizontal, Eye, Download, FileSpreadsheet, Layers, Plus } from "lucide-react"
 
 export default function BatchesPage() {
+  const router = useRouter()
   const [batches, setBatches] = useState<Batch[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -56,6 +57,7 @@ export default function BatchesPage() {
     const { data } = await supabase
       .from("batches")
       .select("*")
+      .not("status", "in", '("draft","ready")')
       .order("created_at", { ascending: false })
 
     setBatches((data as Batch[]) ?? [])
@@ -70,33 +72,67 @@ export default function BatchesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Batches</h1>
+          <h1 className="page-title">Batches</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Upload and manage batch call jobs
           </p>
         </div>
-        <NewBatchModal onBatchCreated={fetchBatches} />
+        <Button
+          onClick={() => router.push("/batches/new")}
+          className="bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
+        >
+          <Plus size={16} className="mr-2" />
+          New Batch
+        </Button>
       </div>
 
+      <div className="pt-2">
       {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-14 w-full rounded-md" />
-          ))}
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Agent</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead className="text-right">Completed</TableHead>
+              <TableHead className="text-right">Failed</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead className="w-[70px]" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <TableRow key={i}>
+                <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="ml-auto h-4 w-8" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                <TableCell><Skeleton className="ml-auto size-8 rounded-lg" /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       ) : batches.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16">
+        <div className="surface-card flex flex-col items-center justify-center py-16">
           <Layers size={40} className="text-muted-foreground/50" />
           <h3 className="mt-4 text-lg font-medium">No batches yet</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             Upload your first batch to get started.
           </p>
-          <div className="mt-4">
-            <NewBatchModal onBatchCreated={fetchBatches} />
-          </div>
+          <Button
+            onClick={() => router.push("/batches/new")}
+            className="mt-4 bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)]"
+          >
+            <Plus size={16} className="mr-2" />
+            New Batch
+          </Button>
         </div>
       ) : (
-        <div className="rounded-lg border bg-white">
+        <div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -112,9 +148,13 @@ export default function BatchesPage() {
             </TableHeader>
             <TableBody>
               {batches.map((batch) => (
-                <TableRow key={batch.id}>
+                <TableRow
+                  key={batch.id}
+                  className="cursor-pointer"
+                  onClick={() => router.push(`/batches/${batch.id}`)}
+                >
                   <TableCell className="font-medium">{batch.name || "Untitled"}</TableCell>
-                  <TableCell className="text-muted-foreground">{batch.agent_name}</TableCell>
+                  <TableCell className="text-muted-foreground">{batch.agent_display_name || batch.agent_name}</TableCell>
                   <TableCell>
                     <StatusBadge status={batch.status} />
                   </TableCell>
@@ -130,10 +170,10 @@ export default function BatchesPage() {
                   <TableCell className="text-muted-foreground">
                     {formatDate(batch.created_at)}
                   </TableCell>
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" className="hover:bg-transparent">
                           <MoreHorizontal size={16} />
                         </Button>
                       </DropdownMenuTrigger>
@@ -145,10 +185,12 @@ export default function BatchesPage() {
                           </Link>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleDownloadOriginal(batch)}>
-                          <FileSpreadsheet size={14} />
-                          Download Original
-                        </DropdownMenuItem>
+                        {batch.input_file_path && (
+                          <DropdownMenuItem onClick={() => handleDownloadOriginal(batch)}>
+                            <FileSpreadsheet size={14} />
+                            Download Original
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onClick={() => handleDownloadResults(batch.id)}>
                           <Download size={14} />
                           Download Results
@@ -162,6 +204,7 @@ export default function BatchesPage() {
           </Table>
         </div>
       )}
+      </div>
     </div>
   )
 }

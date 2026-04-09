@@ -1,6 +1,10 @@
 "use client"
 
+import { useEffect, useId, useState } from "react"
+
 import type { AgentSchema, AgentTool } from "@/lib/types"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { DeleteIconButton } from "@/components/delete-icon-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,7 +16,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Plus, Trash2 } from "lucide-react"
+import { Pencil, Plus, Trash2 } from "lucide-react"
+
+export function formatAgentToolTypeLabel(type: string): string {
+  return type
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ")
+}
 
 export function AgentToolCard({
   tool,
@@ -23,26 +34,129 @@ export function AgentToolCard({
   onChange: (t: AgentTool) => void
   onRemove: () => void
 }) {
-  const label = tool.type
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ")
-  const targets = (tool.settings.targets as Record<string, string> | undefined) ?? {}
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<AgentTool>(tool)
+  const descFieldId = useId()
+
+  useEffect(() => {
+    if (!editing) setDraft(tool)
+  }, [tool, editing])
+
+  const label = formatAgentToolTypeLabel(tool.type)
+  const viewTargets = (tool.settings.targets as Record<string, string> | undefined) ?? {}
+  const draftTargets = (draft.settings.targets as Record<string, string> | undefined) ?? {}
+
+  const startEdit = () => {
+    setDraft(tool)
+    setEditing(true)
+  }
+
+  const saveEdit = () => {
+    onChange(draft)
+    setEditing(false)
+  }
+
+  const cancelEdit = () => {
+    setDraft(tool)
+    setEditing(false)
+  }
 
   return (
-    <div className="rounded-lg border p-3">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="rounded-lg border border-black/[0.08] bg-white p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-semibold">{label}</span>
-        <Button type="button" variant="ghost" size="icon-sm" onClick={onRemove}>
-          <Trash2 size={16} className="text-destructive" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {editing ? (
+            <>
+              <Button type="button" variant="ghost" size="sm" className="h-8" onClick={cancelEdit}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 bg-[var(--color-brand)] px-3 text-white hover:bg-[var(--color-brand-dark)]"
+                onClick={saveEdit}
+              >
+                Save
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Edit tool"
+                title="Edit"
+                onClick={startEdit}
+              >
+                <Pencil size={14} aria-hidden />
+              </Button>
+              <DeleteIconButton title="Remove tool" onClick={onRemove}>
+                <Trash2 size={16} className="shrink-0" />
+              </DeleteIconButton>
+            </>
+          )}
+        </div>
       </div>
-      <div className="space-y-2">
-        <Label className="text-xs text-muted-foreground">Description</Label>
-        <Textarea rows={2} value={tool.description} onChange={(e) => onChange({ ...tool, description: e.target.value })} />
-      </div>
-      {tool.type === "transfer_call" && (
-        <TransferTargetsBlock tool={tool} targets={targets} onChange={onChange} />
+
+      {!editing ? (
+        <>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Description
+            </p>
+            <div
+              className="min-h-[2.75rem] rounded-lg border border-black/[0.06] bg-muted/25 px-3 py-2.5 text-sm leading-relaxed text-foreground"
+              aria-readonly
+            >
+              {tool.description.trim() ? (
+                tool.description
+              ) : (
+                <span className="italic text-muted-foreground">No description — click Edit to add one.</span>
+              )}
+            </div>
+          </div>
+          {tool.type === "transfer_call" && (
+            <div className="mt-3 space-y-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Transfer targets
+              </p>
+              {Object.keys(viewTargets).length === 0 ? (
+                <p className="text-sm italic text-muted-foreground">None — click Edit to add destinations.</p>
+              ) : (
+                <ul className="space-y-1.5 rounded-lg border border-black/[0.06] bg-muted/20 px-3 py-2">
+                  {Object.entries(viewTargets).map(([k, v]) => (
+                    <li key={k} className="text-sm">
+                      <span className="font-medium text-foreground">{k}</span>
+                      <span className="mx-1.5 text-muted-foreground">→</span>
+                      <span className="font-mono text-xs text-foreground/90">{v || "—"}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground" htmlFor={descFieldId}>
+              Description
+            </Label>
+            <Textarea
+              id={descFieldId}
+              rows={3}
+              value={draft.description}
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              placeholder="What this tool does and when the agent should use it"
+              className="min-h-[4.5rem] resize-y border border-black/[0.06] bg-muted/25 px-3 py-2.5 shadow-none ring-0 ring-offset-0 focus-visible:border-black/[0.06] focus-visible:ring-2 focus-visible:ring-ring/50"
+            />
+          </div>
+          {draft.type === "transfer_call" && (
+            <TransferTargetsBlock tool={draft} targets={draftTargets} onChange={setDraft} />
+          )}
+        </>
       )}
     </div>
   )
@@ -57,6 +171,7 @@ function TransferTargetsBlock({
   targets: Record<string, string>
   onChange: (t: AgentTool) => void
 }) {
+  const [pendingRemoveKey, setPendingRemoveKey] = useState<string | null>(null)
   const entries = Object.entries(targets)
   return (
     <div className="mt-3 space-y-2">
@@ -65,20 +180,24 @@ function TransferTargetsBlock({
         <p className="text-xs text-muted-foreground">No targets yet.</p>
       )}
       {entries.map(([k, v], i) => (
-        <div key={i} className="flex gap-2">
-          <Input
-            placeholder="Name"
-            value={k}
-            onChange={(e) => {
-              const next = { ...targets }
-              delete next[k]
-              next[e.target.value] = v
-              onChange({ ...tool, settings: { ...tool.settings, targets: next } })
-            }}
-          />
+        <div key={i} className="space-y-1.5 rounded-md border border-black/[0.08] bg-white/80 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <Input
+              placeholder="Name"
+              value={k}
+              className="h-8 text-sm"
+              onChange={(e) => {
+                const next = { ...targets }
+                delete next[k]
+                next[e.target.value] = v
+                onChange({ ...tool, settings: { ...tool.settings, targets: next } })
+              }}
+            />
+            <DeleteIconButton title="Remove target" className="shrink-0" onClick={() => setPendingRemoveKey(k)} />
+          </div>
           <Input
             placeholder="+1..."
-            className="font-mono"
+            className="h-8 font-mono text-sm"
             value={v}
             onChange={(e) => {
               onChange({
@@ -87,18 +206,6 @@ function TransferTargetsBlock({
               })
             }}
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => {
-              const next = { ...targets }
-              delete next[k]
-              onChange({ ...tool, settings: { ...tool.settings, targets: next } })
-            }}
-          >
-            <Trash2 size={14} />
-          </Button>
         </div>
       ))}
       <Button
@@ -117,6 +224,37 @@ function TransferTargetsBlock({
       >
         <Plus size={14} className="mr-1" /> Add target
       </Button>
+
+      <ConfirmDeleteDialog
+        open={pendingRemoveKey !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingRemoveKey(null)
+        }}
+        title="Remove transfer target?"
+        description={
+          pendingRemoveKey ? (
+            <>
+              Remove <span className="font-medium text-foreground">{pendingRemoveKey}</span> from this tool’s
+              transfer list?
+            </>
+          ) : (
+            ""
+          )
+        }
+        bullets={[
+          "The destination is removed from this draft only.",
+          "Publish your draft to update the live agent.",
+        ]}
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (pendingRemoveKey == null) return
+          const key = pendingRemoveKey
+          const next = { ...targets }
+          delete next[key]
+          onChange({ ...tool, settings: { ...tool.settings, targets: next } })
+          setPendingRemoveKey(null)
+        }}
+      />
     </div>
   )
 }

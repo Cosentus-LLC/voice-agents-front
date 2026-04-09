@@ -1,5 +1,4 @@
-import type { AgentDraft } from "./types"
-import type { AgentTool } from "./types"
+import type { AgentDraft, AgentTool, PostCallConfig, PostCallField } from "./types"
 
 /** Fields not sent to PUT /api/agents/{name} */
 const OMIT_FROM_API = new Set(["has_unpublished_changes", "agent_id"])
@@ -69,17 +68,56 @@ function normalizeTools(v: unknown): AgentTool[] {
 
 function normalizePostCallAnalyses(
   v: unknown
-): { name: string; model: string; prompt?: string; output_type: string }[] {
-  if (!Array.isArray(v)) return []
-  return v.map((item) => {
-    if (!isObj(item)) return { name: "analysis", model: "", output_type: "text" }
-    return {
-      name: str(item.name, "analysis"),
-      model: str(item.model, ""),
-      output_type: str(item.output_type, "text"),
-      prompt: typeof item.prompt === "string" ? item.prompt : undefined,
-    }
-  })
+): PostCallConfig {
+  const DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+  // New shape: { model, fields[] }
+  if (isObj(v) && Array.isArray(v.fields)) {
+    const fields: PostCallField[] = v.fields.map((raw) => {
+      const o = isObj(raw) ? raw : {}
+      const type = str(o.type, "text")
+      return {
+        name: str(o.name, "field"),
+        type: type === "selector" ? "selector" : "text",
+        description: str(o.description, ""),
+        format_examples: Array.isArray(o.format_examples)
+          ? o.format_examples.map((x) => String(x)).filter(Boolean)
+          : undefined,
+        choices: Array.isArray(o.choices)
+          ? o.choices.map((x) => String(x)).filter(Boolean)
+          : undefined,
+      }
+    })
+
+    const model = str(v.model, DEFAULT_MODEL) || DEFAULT_MODEL
+    return { model, fields }
+  }
+
+  // Legacy shape: [{ name, model, output_type, prompt? }]
+  if (Array.isArray(v)) {
+    const model = (() => {
+      const first = v[0]
+      if (isObj(first)) return str(first.model, DEFAULT_MODEL) || DEFAULT_MODEL
+      return DEFAULT_MODEL
+    })()
+
+    const fields: PostCallField[] = v
+      .map((raw) => {
+        const o = isObj(raw) ? raw : null
+        if (!o) return null
+        const output = str(o.output_type, "text")
+        return {
+          name: str(o.name, "field"),
+          type: output === "selector" ? "selector" : "text",
+          description: typeof o.prompt === "string" ? o.prompt : "",
+        } satisfies PostCallField
+      })
+      .filter(Boolean) as PostCallField[]
+
+    return { model, fields }
+  }
+
+  return { model: DEFAULT_MODEL, fields: [] }
 }
 
 /**

@@ -11,9 +11,8 @@ import { CallInfoCard } from "@/components/call-info-card"
 import { AnalysisCard } from "@/components/analysis-card"
 import { CaseDataCard } from "@/components/case-data-card"
 import { formatAgentName } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft, AlertTriangle } from "lucide-react"
+import { ChevronRight, AlertTriangle } from "lucide-react"
 
 export default function CallDetailPage({
   params,
@@ -37,16 +36,45 @@ export default function CallDetailPage({
   if (loading) {
     return (
       <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
+        <div className="flex items-center gap-1.5">
+          <Skeleton className="h-4 w-10" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-8 w-36" />
+            <Skeleton className="h-5 w-20 rounded-full" />
+          </div>
+          <Skeleton className="h-4 w-48" />
+        </div>
         <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-          <div className="space-y-4">
-            <Skeleton className="h-96 w-full" />
-            <Skeleton className="h-20 w-full" />
+          <div className="space-y-6">
+            <div className="surface-card p-6 space-y-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-80 w-full rounded-lg" />
+            </div>
+            <div className="surface-card p-6 space-y-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+            </div>
           </div>
           <div className="space-y-4">
-            <Skeleton className="h-60 w-full" />
-            <Skeleton className="h-40 w-full" />
-            <Skeleton className="h-40 w-full" />
+            <div className="surface-card p-5 space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center justify-between">
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-4 w-24" />
+                </div>
+              ))}
+            </div>
+            <div className="surface-card p-5 space-y-3">
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-24 w-full rounded-lg" />
+            </div>
+            <div className="surface-card p-5 space-y-3">
+              <Skeleton className="h-5 w-20" />
+              <Skeleton className="h-20 w-full rounded-lg" />
+            </div>
           </div>
         </div>
       </div>
@@ -57,29 +85,28 @@ export default function CallDetailPage({
     return (
       <div className="py-16 text-center">
         <p className="text-muted-foreground">Call not found.</p>
-        <Button variant="link" className="mt-2" render={<Link href="/calls" />}>
+        <Link href="/calls" className="mt-2 inline-block text-sm font-medium text-[var(--color-brand)] hover:underline">
           Back to Calls
-        </Button>
+        </Link>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" render={<Link href={call.batch_id ? `/batches/${call.batch_id}` : "/calls"} />}>
-          <ArrowLeft size={16} className="mr-1" />
-          {call.batch_id ? "Batch" : "Calls"}
-        </Button>
-      </div>
+      <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Link href="/calls" className="transition-colors hover:text-foreground">Calls</Link>
+        <ChevronRight className="size-3.5" />
+        <span className="text-foreground font-medium">Call Detail</span>
+      </nav>
 
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Call Detail</h1>
+          <h1 className="page-title">Call Detail</h1>
           <StatusBadge status={call.status} />
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {formatAgentName(call.agent_name)}
+          {call.agent_display_name || formatAgentName(call.agent_name)}
         </p>
       </div>
 
@@ -95,11 +122,11 @@ export default function CallDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
-          <div>
+          <div className="surface-card p-6">
             <h2 className="mb-3 text-lg font-medium">Transcript</h2>
             <TranscriptViewer transcript={call.transcript ?? []} />
           </div>
-          <div>
+          <div className="surface-card p-6">
             <h2 className="mb-3 text-lg font-medium">Recording</h2>
             <AudioPlayer recordingPath={call.recording_path} />
           </div>
@@ -108,7 +135,7 @@ export default function CallDetailPage({
         <div className="space-y-4">
           <CallInfoCard call={call} />
           <AnalysisCard analyses={call.post_call_analyses ?? {}} />
-          <CaseDataCard data={call.case_data ?? {}} />
+          <CaseDataCard data={call.case_data ?? {}} defaultExpanded={call.direction === "test"} />
         </div>
       </div>
     </div>

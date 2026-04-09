@@ -1,18 +1,15 @@
 "use client"
 
-import { Sidebar } from "@/components/sidebar"
-import { Header } from "@/components/header"
+import { AppSidebar } from "@/components/sidebar"
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-7xl px-6 py-6">{children}</div>
-        </main>
-      </div>
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset className="min-h-0 overflow-y-auto bg-background">
+        <div className="mx-auto w-full px-6 py-6 lg:px-8">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

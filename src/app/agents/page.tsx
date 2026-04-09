@@ -1,139 +1,527 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
-import Link from "next/link"
-import { getAgents, getAgent } from "@/lib/api"
+import { useCallback, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { cloneAgent, createAgent, deleteAgent, getAgents, getAgent, getPhoneNumbers, getVoices } from "@/lib/api"
+import { apiResponseToDraftRow } from "@/lib/agent-draft"
 import { supabase } from "@/lib/supabase"
-import type { Agent } from "@/lib/types"
-import { Badge } from "@/components/ui/badge"
+import type { Agent, AgentListItem, PhoneNumber, Voice } from "@/lib/types"
+import { formatPhone } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Bot, ChevronRight, Plus } from "lucide-react"
+import { Bot, Loader2, MoreVertical, Plus } from "lucide-react"
+import { toast } from "sonner"
+
+/** E.g. +1 (949) 691-3324 → (949) 691-3324 for list display */
+function formatPhoneNational(phone: string | null | undefined): string {
+  if (phone == null || typeof phone !== "string") return ""
+  return formatPhone(phone).replace(/^\+1\s+/, "")
+}
+
+function abbreviateLlmModel(model: string | null | undefined): string {
+  if (model == null || typeof model !== "string") return "—"
+  const m = model.trim()
+  if (!m) return "—"
+  const lower = m.toLowerCase()
+  if (lower.startsWith("claude-")) return m.slice(7) || "—"
+  if (lower.startsWith("claude_")) return m.slice(7) || "—"
+  if (lower.startsWith("gpt-")) return m.slice(4) || "—"
+  if (lower.startsWith("models/")) return m.slice(7) || "—"
+  return m
+}
+
+/** Prefer non-empty values from GET /api/agents list when GET /api/agents/:name omits them */
+function mergeAgentListFields(detail: Agent, row: AgentListItem | undefined): Agent {
+  if (!row) return detail
+  const llm = detail.llm_model?.trim() || row.llm_model?.trim() || detail.llm_model
+  const ttsModel = detail.tts_model?.trim() || row.tts_model?.trim() || detail.tts_model
+  const ttsVoice = detail.tts_voice_id?.trim() || row.tts_voice_id?.trim() || detail.tts_voice_id
+  return { ...detail, llm_model: llm, tts_model: ttsModel, tts_voice_id: ttsVoice }
+}
+
+/** Comma-separated "(949) 691-3324 (inbound, outbound)" per number assigned to this agent */
+function phoneAssignmentsForAgent(agentId: string | null | undefined, phones: PhoneNumber[]): string {
+  if (!agentId) return ""
+  const parts: string[] = []
+  for (const p of phones) {
+    if (p.is_active === false) continue
+    const national = formatPhoneNational(p.number)
+    if (!national) continue
+    const dirs: string[] = []
+    if (p.inbound_agent?.id === agentId) dirs.push("inbound")
+    if (p.outbound_agent?.id === agentId) dirs.push("outbound")
+    if (dirs.length === 0) continue
+    parts.push(`${national} (${dirs.join(", ")})`)
+  }
+  return parts.join(", ")
+}
 
 export default function AgentsPage() {
+  const router = useRouter()
   const [agents, setAgents] = useState<Agent[]>([])
-  const [draftDirtyIds, setDraftDirtyIds] = useState<Set<string>>(new Set())
+  const [phones, setPhones] = useState<PhoneNumber[]>([])
+  const [voiceMap, setVoiceMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    async function fetchAll() {
-      setLoading(true)
-      try {
-        const list = await getAgents()
-        const details = await Promise.all(list.map((a) => getAgent(a.name).catch(() => null)))
-        setAgents(details.filter(Boolean) as Agent[])
+  const [cloneTarget, setCloneTarget] = useState<Agent | null>(null)
+  const [cloneOpen, setCloneOpen] = useState(false)
+  const [cloneName, setCloneName] = useState("")
+  const [cloneDisplay, setCloneDisplay] = useState("")
+  const [cloning, setCloning] = useState(false)
 
-        const { data: drafts } = await supabase
-          .from("agent_drafts")
-          .select("agent_id, has_unpublished_changes")
-          .eq("has_unpublished_changes", true)
+  const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
-        const ids = new Set<string>()
-        for (const row of drafts ?? []) {
-          if (row.agent_id) ids.add(row.agent_id as string)
-        }
-        setDraftDirtyIds(ids)
-      } catch {
-        setAgents([])
-      }
-      setLoading(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createName, setCreateName] = useState("")
+  const [creating, setCreating] = useState(false)
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const list = await getAgents()
+      const listByName = new Map(list.map((a) => [a.name, a]))
+      const [details, phoneList, voiceList] = await Promise.all([
+        Promise.all(list.map((a) => getAgent(a.name).catch(() => null))),
+        getPhoneNumbers().catch(() => [] as PhoneNumber[]),
+        getVoices().catch(() => [] as Voice[]),
+      ])
+      setAgents(
+        details
+          .filter((d): d is Agent => d != null)
+          .map((d) => mergeAgentListFields(d, listByName.get(d.name)))
+      )
+      setPhones(phoneList)
+      setVoiceMap(new Map(voiceList.map((v) => [v.voice_id, v.custom_name || v.name])))
+    } catch {
+      setAgents([])
     }
-    fetchAll()
+    setLoading(false)
   }, [])
 
-  const dirtyByName = useMemo(() => {
-    const m = new Map<string, boolean>()
-    for (const a of agents) {
-      m.set(a.name, draftDirtyIds.has(a.id))
+  useEffect(() => {
+    void fetchAll()
+  }, [fetchAll])
+
+  const handleClone = async () => {
+    if (!cloneTarget) return
+    if (!cloneName.trim() || !cloneDisplay.trim()) {
+      toast.error("Name and display name required")
+      return
     }
-    return m
-  }, [agents, draftDirtyIds])
+    setCloning(true)
+    try {
+      const created = await cloneAgent(cloneTarget.name, {
+        name: cloneName.trim(),
+        display_name: cloneDisplay.trim(),
+      })
+      const draftRow = apiResponseToDraftRow(created, {
+        agent_id: created.id,
+        has_unpublished_changes: false,
+      })
+      await supabase.from("agent_drafts").insert(draftRow)
+      toast.success("Agent cloned")
+      setCloneOpen(false)
+      setCloneTarget(null)
+      setCloneName("")
+      setCloneDisplay("")
+      router.push(`/agents/${encodeURIComponent(created.name)}`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Clone failed")
+    }
+    setCloning(false)
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteAgent(deleteTarget.name)
+      toast.success("Agent deleted")
+      setDeleteOpen(false)
+      setDeleteTarget(null)
+      await fetchAll()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed")
+    }
+    setDeleting(false)
+  }
+
+  const openCloneDialog = (agent: Agent) => {
+    setCloneTarget(agent)
+    setCloneName("")
+    setCloneDisplay(`${agent.display_name?.trim() || agent.name} (copy)`)
+    setCloneOpen(true)
+  }
+
+  const handleCreate = async () => {
+    const displayName = createName.trim()
+    if (!displayName) {
+      toast.error("Agent name is required")
+      return
+    }
+    const slug = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+    if (!slug) {
+      toast.error("Name must contain at least one letter or number")
+      return
+    }
+    setCreating(true)
+    try {
+      const created = await createAgent({
+        name: slug,
+        display_name: displayName,
+      })
+      const draftRow = apiResponseToDraftRow(created, {
+        agent_id: created.id,
+        has_unpublished_changes: false,
+      })
+      const { error: insErr } = await supabase.from("agent_drafts").insert(draftRow)
+      if (insErr) {
+        toast.error(`Agent created but draft row failed: ${insErr.message}`)
+      } else {
+        toast.success("Agent created")
+      }
+      setCreateOpen(false)
+      setCreateName("")
+      router.push(`/agents/${encodeURIComponent(created.name)}`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create agent")
+    }
+    setCreating(false)
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Voice agent configurations</p>
+          <h1 className="page-title">Agents</h1>
+          <p className="page-subtitle mt-1">Voice agent configurations</p>
         </div>
-        <Link
-          href="/agents/create"
-          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--color-brand)] px-4 text-sm font-medium text-white hover:bg-[var(--color-brand-dark)]"
+        <Button
+          onClick={() => setCreateOpen(true)}
+          className="h-9 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
           <Plus size={16} className="mr-1.5" />
           Create Agent
-        </Link>
+        </Button>
       </div>
 
+      <div className="pt-2">
       {loading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 w-full rounded-lg" />
-          ))}
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Phone</TableHead>
+              <TableHead>Voice</TableHead>
+              <TableHead>Model</TableHead>
+              <TableHead className="w-[48px]" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <TableRow key={i}>
+                <TableCell><Skeleton className="h-4 w-36" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                <TableCell><Skeleton className="h-5 w-20 rounded-md" /></TableCell>
+                <TableCell />
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       ) : agents.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16">
-          <Bot size={40} className="text-muted-foreground/50" />
-          <h3 className="mt-4 text-lg font-medium">No agents configured</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Create an agent or sync from the backend.</p>
-          <Link
-            href="/agents/create"
-            className="mt-4 inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-muted"
+        <div className="surface-card flex flex-col items-center justify-center py-20">
+          <Bot size={48} className="text-muted-foreground/30" />
+          <h3 className="mt-4 text-base font-medium">No agents configured</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Create an agent to get started.</p>
+          <Button
+            variant="secondary"
+            onClick={() => setCreateOpen(true)}
+            className="mt-4 h-9 rounded-lg px-4 text-sm font-medium"
           >
             Create Agent
-          </Link>
+          </Button>
         </div>
       ) : (
-        <div className="divide-y divide-border rounded-lg border bg-white">
-          {agents.map((agent) => (
-            <Link
-              key={agent.name}
-              href={`/agents/${encodeURIComponent(agent.name)}`}
-              className="group flex items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/50"
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand-light)] text-[var(--color-brand)]">
-                <Bot size={20} />
-              </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Phone</TableHead>
+              <TableHead>Voice</TableHead>
+              <TableHead>Model</TableHead>
+              <TableHead className="w-[48px]" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {agents.map((agent) => {
+              const phoneLine = phoneAssignmentsForAgent(agent.id, phones)
+              const llmShort = abbreviateLlmModel(agent.llm_model)
+              const vid = agent.tts_voice_id?.trim() || ""
+              const voiceLabel = vid ? (voiceMap.get(vid) ?? vid) : ""
 
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <h3 className="text-sm font-semibold group-hover:text-[var(--color-brand)]">{agent.display_name}</h3>
-                  {dirtyByName.get(agent.name) && (
-                    <Badge className="border-amber-300 bg-amber-50 text-xs text-amber-900">Draft</Badge>
-                  )}
-                </div>
-                <p className="mt-0.5 truncate text-sm text-muted-foreground">{agent.description}</p>
-              </div>
-
-              <div className="hidden items-center gap-1.5 md:flex">
-                <Badge variant="secondary" className="text-xs">
-                  {agent.llm_model}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {agent.tts_provider}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {agent.stt_provider}
-                </Badge>
-              </div>
-
-              <div className="hidden items-center gap-3 text-xs text-muted-foreground lg:flex">
-                <span>
-                  {agent.tools.length} tool{agent.tools.length !== 1 ? "s" : ""}
-                </span>
-                <span className="text-border">|</span>
-                <span>
-                  {agent.post_call_analyses.length} analys{agent.post_call_analyses.length === 1 ? "is" : "es"}
-                </span>
-              </div>
-
-              <ChevronRight
-                size={16}
-                className="shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground"
-              />
-            </Link>
-          ))}
-        </div>
+              return (
+                <TableRow
+                  key={agent.name}
+                  className="cursor-pointer"
+                  onClick={() => router.push(`/agents/${encodeURIComponent(agent.name)}`)}
+                >
+                  <TableCell className="font-medium">
+                    {agent.display_name?.trim() || agent.name || "—"}
+                  </TableCell>
+                  <TableCell>
+                    {phoneLine ? (
+                      <span className="mono">{phoneLine}</span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {voiceLabel || "—"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {llmShort}
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                          aria-label={`Actions for ${agent.display_name}`}
+                        >
+                          <MoreVertical className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuItem onSelect={() => openCloneDialog(agent)}>Clone</DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => {
+                            setDeleteTarget(agent)
+                            setDeleteOpen(true)
+                          }}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       )}
+      </div>
+
+      <Dialog
+        open={cloneOpen}
+        onOpenChange={(open) => {
+          setCloneOpen(open)
+          if (!open) {
+            setCloneTarget(null)
+            setCloneName("")
+            setCloneDisplay("")
+          }
+        }}
+      >
+        <DialogContent className="gap-0 overflow-hidden sm:max-w-[440px]">
+          <div className="space-y-4 pb-2">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-lg font-semibold tracking-tight">Clone agent</DialogTitle>
+              {cloneTarget && (
+                <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
+                  Creates a new agent with the same configuration as{" "}
+                  <span className="font-medium text-foreground">{cloneTarget.display_name}</span>.
+                </DialogDescription>
+              )}
+            </DialogHeader>
+
+            <div className="rounded-xl border border-black/[0.06] bg-secondary/50 px-4 py-3.5">
+              <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                New agent details
+              </p>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>New agent name (path)</Label>
+                  <Input
+                    className="font-mono text-sm"
+                    value={cloneName}
+                    onChange={(e) => setCloneName(e.target.value)}
+                    placeholder="team/new_agent"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Display name</Label>
+                  <Input value={cloneDisplay} onChange={(e) => setCloneDisplay(e.target.value)} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="-mx-6 -mb-6 mt-2 flex gap-3 rounded-b-2xl bg-secondary/20 px-6 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 basis-0 justify-center"
+              onClick={() => setCloneOpen(false)}
+              disabled={cloning}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="flex-1 basis-0 justify-center font-medium"
+              onClick={() => void handleClone()}
+              disabled={cloning}
+            >
+              {cloning ? <Loader2 className="size-4 animate-spin" /> : "Clone agent"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) setDeleteTarget(null)
+        }}
+      >
+        <DialogContent className="gap-0 overflow-hidden sm:max-w-[440px]">
+          <div className="space-y-4 pb-2">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-lg font-semibold tracking-tight">Delete agent?</DialogTitle>
+              <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
+                {deleteTarget ? (
+                  <>
+                    This soft-deletes{" "}
+                    <span className="font-medium text-foreground">{deleteTarget.display_name}</span> on the server.
+                  </>
+                ) : (
+                  "This soft-deletes the agent on the server."
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="rounded-xl border border-black/[0.06] bg-secondary/50 px-4 py-3.5">
+              <p className="mb-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                What happens next
+              </p>
+              <ul className="list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/75 marker:text-muted-foreground/60">
+                <li>The agent no longer appears in your list or API</li>
+                <li>Update phone routing if this agent was assigned to a number</li>
+                <li className="font-medium text-foreground/90">This cannot be undone from the dashboard</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="-mx-6 -mb-6 mt-2 flex gap-3 rounded-b-2xl bg-secondary/20 px-6 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 basis-0 justify-center"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="flex-1 basis-0 justify-center font-medium"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="size-4 animate-spin" /> : "Delete agent"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open)
+          if (!open) setCreateName("")
+        }}
+      >
+        <DialogContent className="gap-0 overflow-hidden sm:max-w-[440px]">
+          <div className="space-y-4 pb-2">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-lg font-semibold tracking-tight">Create agent</DialogTitle>
+              <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
+                Name your agent and start configuring.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-1.5">
+              <Label>Agent Name</Label>
+              <Input
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                placeholder="e.g. Chris — Claim Status"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && createName.trim()) void handleCreate()
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="-mx-6 -mb-6 mt-2 flex gap-3 rounded-b-2xl bg-secondary/20 px-6 py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1 basis-0 justify-center"
+              onClick={() => setCreateOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="flex-1 basis-0 justify-center font-medium"
+              onClick={() => void handleCreate()}
+              disabled={creating || !createName.trim()}
+            >
+              {creating ? <Loader2 className="size-4 animate-spin" /> : "Create"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

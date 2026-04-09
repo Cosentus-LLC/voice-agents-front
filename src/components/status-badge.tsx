@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 type CallStatus = "pending" | "in_progress" | "completed" | "failed" | "no_answer"
-type BatchStatus = "draft" | "validating" | "ready" | "running" | "completed" | "failed"
+type BatchStatus = "draft" | "validating" | "ready" | "running" | "completed" | "failed" | "scheduled" | "paused" | "canceled"
 type RowStatus = "valid" | "fixable" | "invalid"
 
 const statusConfig: Record<string, { className: string; label: string }> = {
@@ -18,8 +18,12 @@ const statusConfig: Record<string, { className: string; label: string }> = {
   valid: { className: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Valid" },
   fixable: { className: "bg-amber-50 text-amber-700 border-amber-200", label: "Fixable" },
   invalid: { className: "bg-red-50 text-red-700 border-red-200", label: "Invalid" },
+  scheduled: { className: "bg-blue-50 text-blue-700 border-blue-200", label: "Scheduled" },
+  paused: { className: "bg-amber-50 text-amber-700 border-amber-200", label: "Paused" },
+  canceled: { className: "bg-gray-100 text-gray-600 border-gray-200", label: "Canceled" },
   outbound: { className: "bg-blue-50 text-blue-700 border-blue-200", label: "Outbound" },
   inbound: { className: "bg-violet-50 text-violet-700 border-violet-200", label: "Inbound" },
+  test: { className: "bg-orange-50 text-orange-700 border-orange-200", label: "Test" },
 }
 
 export function StatusBadge({

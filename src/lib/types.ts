@@ -1,8 +1,10 @@
 export interface Call {
   id: string
   agent_name: string
+  from_number?: string | null
   target_number: string
-  direction: "outbound" | "inbound"
+  agent_display_name?: string | null
+  direction: "outbound" | "inbound" | "test"
   status: "pending" | "in_progress" | "completed" | "failed" | "no_answer"
   started_at: string | null
   ended_at: string | null
@@ -18,6 +20,19 @@ export interface Call {
   updated_at: string
 }
 
+export interface PostCallField {
+  name: string
+  type: "text" | "selector"
+  description: string
+  format_examples?: string[]
+  choices?: string[]
+}
+
+export interface PostCallConfig {
+  model: string
+  fields: PostCallField[]
+}
+
 export interface TranscriptTurn {
   role: "user" | "assistant"
   content: string
@@ -29,7 +44,7 @@ export interface Batch {
   name: string
   agent_name: string
   from_number: string
-  status: "draft" | "validating" | "ready" | "running" | "completed" | "failed"
+  status: "draft" | "validating" | "ready" | "running" | "completed" | "failed" | "scheduled" | "paused" | "canceled"
   total_rows: number
   completed_rows: number
   failed_rows: number
@@ -38,6 +53,11 @@ export interface Batch {
   rows: unknown[]
   input_file_path: string | null
   output_file_path: string | null
+  timezone: string | null
+  calling_window_start: string | null
+  calling_window_end: string | null
+  calling_window_days: string[] | null
+  concurrency: number | null
   created_at: string
   updated_at: string
 }
@@ -104,7 +124,7 @@ export interface Agent {
   first_message: string
   recording_enabled: boolean
   recording_channels: number
-  post_call_analyses: { name: string; model: string; prompt?: string; output_type: string }[]
+  post_call_analyses: PostCallConfig
   idle_timeout_secs: number
   idle_message: string
   max_call_duration_secs: number
@@ -161,10 +181,27 @@ export interface AgentSchema {
   defaults: Record<string, unknown>
 }
 
-/** List item from GET /api/agents (id used for phone routing) */
+export interface Voice {
+  voice_id: string
+  name: string
+  custom_name: string | null
+  description: string | null
+  preview_url: string | null
+  gender: string | null
+  accent: string | null
+  age: string | null
+  category: string | null
+  labels: Record<string, string> | null
+  created_at: string
+}
+
+/** List item from GET /api/agents (id used for phone routing; may include model fields flat on the object) */
 export interface AgentListItem {
   id?: string
   name: string
   display_name: string
   description: string
+  llm_model?: string | null
+  tts_model?: string | null
+  tts_voice_id?: string | null
 }

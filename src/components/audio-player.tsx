@@ -63,7 +63,7 @@ export function AudioPlayer({ recordingPath }: AudioPlayerProps) {
 
   return (
     <div className="rounded-lg border border-border bg-white p-4">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2">
         <Volume2 size={18} className="text-[var(--color-brand)]" />
         <span className="text-sm font-medium">Call Recording</span>
       </div>

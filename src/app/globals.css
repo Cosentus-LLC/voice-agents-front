@@ -39,66 +39,122 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-3xl: calc(var(--radius) * 2.5);
+  --radius-4xl: calc(var(--radius) * 3);
   --color-brand: #01B2D6;
-  --color-brand-light: #e6f7fb;
-  --color-brand-dark: #018da8;
-  --color-success: #0d9488;
-  --color-warning: #d97706;
+  --color-brand-light: #e0f7fc;
+  --color-brand-dark: #0196b3;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
 }
 
 :root {
-  --background: #f8f9fa;
-  --foreground: oklch(0.15 0.01 260);
-  --card: #ffffff;
-  --card-foreground: oklch(0.15 0.01 260);
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+
+  --card: #f4f5f7;
+  --card-foreground: #1a1a1a;
+
   --popover: #ffffff;
-  --popover-foreground: oklch(0.15 0.01 260);
+  --popover-foreground: #1a1a1a;
+
   --primary: #01B2D6;
   --primary-foreground: #ffffff;
-  --secondary: oklch(0.96 0.005 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.96 0.005 260);
-  --muted-foreground: oklch(0.5 0.01 260);
-  --accent: oklch(0.96 0.005 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.91 0.005 260);
-  --input: oklch(0.91 0.005 260);
-  --ring: #01B2D6;
-  --chart-1: #01B2D6;
-  --chart-2: #0d9488;
-  --chart-3: #d97706;
-  --chart-4: oklch(0.55 0.01 260);
-  --chart-5: oklch(0.35 0.01 260);
-  --radius: 0.5rem;
+
+  --secondary: #eef0f3;
+  --secondary-foreground: #1a1a1a;
+
+  --muted: #f1f3f5;
+  --muted-foreground: #6b7280;
+
+  --accent: #eef0f3;
+  --accent-foreground: #1a1a1a;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --border: #e8eaed;
+  --input: #e0e2e6;
+  --ring: #c8ccd0;
+
+  --radius: 1rem;
+
   --sidebar: #ffffff;
-  --sidebar-foreground: oklch(0.25 0.01 260);
-  --sidebar-primary: #01B2D6;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #1a1a1a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e6f7fb;
-  --sidebar-accent-foreground: #018da8;
-  --sidebar-border: oklch(0.92 0.005 260);
-  --sidebar-ring: #01B2D6;
+  --sidebar-accent: #f1f3f5;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: #f0f1f3;
+  --sidebar-ring: #1a1a1a;
+
+  --chart-1: #01B2D6;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #6b7280;
+  --chart-5: #374151;
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    border-style: none;
+    border-width: 0;
+    outline-color: hsl(var(--ring) / 0.5);
+  }
+  :focus:not(:focus-visible) {
+    outline: none !important;
+    box-shadow: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   html {
-    @apply font-sans;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
   }
 }
+
+/* ── Shared utility classes ── */
+
+.surface-card {
+  @apply bg-[#f4f5f7] rounded-2xl;
+}
+
+.surface-card-interactive {
+  @apply bg-[#f4f5f7] rounded-2xl transition-all duration-150;
+}
+.surface-card-interactive:hover {
+  @apply bg-[#eef0f3];
+}
+
+.page-title {
+  @apply text-2xl font-semibold tracking-tight text-foreground;
+}
+.page-subtitle {
+  @apply text-[15px] text-muted-foreground;
+}
+
+.section-title {
+  @apply text-base font-semibold text-foreground;
+}
+.section-subtitle {
+  @apply text-xs text-muted-foreground;
+}
+
+.mono {
+  font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+  font-size: 13px;
+}
+
+/* ── Animations ── */
 
 @keyframes pulse-subtle {
   0%, 100% { opacity: 1; }
@@ -106,4 +162,18 @@
 }
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+@keyframes test-call-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(6 182 212 / 0.35);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 16px rgb(6 182 212 / 0);
+  }
+}
+.animate-test-call-pulse {
+  animation: test-call-pulse 2.2s ease-in-out infinite;
 }

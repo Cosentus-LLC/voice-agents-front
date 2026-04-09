@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { CheckCircle2, XCircle } from "lucide-react"
 
 interface AnalysisCardProps {
@@ -21,7 +22,11 @@ function renderValue(value: unknown) {
     )
   }
   if (typeof value === "string") {
-    return <p className="text-sm leading-relaxed">{value}</p>
+    const v = value.trim()
+    if (v.length <= 50) {
+      return <Badge variant="secondary">{v || "—"}</Badge>
+    }
+    return <p className="text-sm leading-relaxed whitespace-pre-wrap">{value}</p>
   }
   if (value === null || value === undefined) {
     return <span className="text-sm text-muted-foreground">—</span>

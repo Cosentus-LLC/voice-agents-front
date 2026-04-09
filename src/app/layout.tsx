@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import { Geist_Mono } from "next/font/google"
 import { Toaster } from "@/components/ui/sonner"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import "./globals.css"
 import { ClientLayout } from "@/components/client-layout"
 
@@ -28,7 +29,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="h-full">
-        <ClientLayout>{children}</ClientLayout>
+        <TooltipProvider>
+          <ClientLayout>{children}</ClientLayout>
+        </TooltipProvider>
         <Toaster />
       </body>
     </html>

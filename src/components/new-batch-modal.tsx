@@ -79,7 +79,7 @@ export function NewBatchModal({ onBatchCreated }: { onBatchCreated?: () => void 
     if (!selectedAgent) return
     setUploading(true)
     try {
-      const data = await uploadBatch(file, selectedAgent)
+      const data = await uploadBatch(file, selectedAgent, "")
       setUploadData(data)
       setStep("validation")
     } catch {
@@ -93,7 +93,10 @@ export function NewBatchModal({ onBatchCreated }: { onBatchCreated?: () => void 
     if (!uploadData) return
     setStarting(true)
     try {
-      await startBatch(uploadData.batch_id, concurrency)
+      await startBatch(uploadData.batch_id, {
+        concurrency,
+        schedule_mode: "now",
+      })
       setStep("running")
       setBatchStatus({
         batch_id: uploadData.batch_id,
