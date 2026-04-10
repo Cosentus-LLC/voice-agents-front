@@ -3,10 +3,9 @@
 import { useEffect, useState, useCallback } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { supabase } from "@/lib/supabase"
 import type { Batch } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
-import { downloadResults } from "@/lib/api"
+import { downloadResults, listBatches, getBatchDownloadUrl } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
 import {
   Table,
@@ -44,23 +43,20 @@ export default function BatchesPage() {
 
   const handleDownloadOriginal = async (batch: Batch) => {
     if (!batch.input_file_path) return
-    const { data } = await supabase.storage
-      .from("batch-files")
-      .createSignedUrl(batch.input_file_path, 3600)
-    if (data?.signedUrl) {
-      window.open(data.signedUrl, "_blank")
+    const url = await getBatchDownloadUrl(batch.id)
+    if (url) {
+      window.open(url, "_blank")
     }
   }
 
   const fetchBatches = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from("batches")
-      .select("*")
-      .not("status", "in", '("draft","ready")')
-      .order("created_at", { ascending: false })
-
-    setBatches((data as Batch[]) ?? [])
+    try {
+      const data = await listBatches()
+      setBatches(data)
+    } catch {
+      setBatches([])
+    }
     setLoading(false)
   }, [])
 

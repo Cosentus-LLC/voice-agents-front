@@ -25,7 +25,90 @@ async function parseErrorBody(res: Response): Promise<unknown> {
   }
 }
 
+// ── Calls ──
+
+export async function listCalls(params?: {
+  page?: number
+  page_size?: number
+  agent_name?: string
+  agent_display_name?: string
+  status?: string
+  direction?: string
+  sort_by?: string
+  sort_order?: string
+}): Promise<{ calls: import("./types").Call[]; total: number; page: number; page_size: number }> {
+  const query = new URLSearchParams()
+  if (params?.page != null) query.set("page", String(params.page))
+  if (params?.page_size) query.set("page_size", String(params.page_size))
+  if (params?.agent_name) query.set("agent_name", params.agent_name)
+  if (params?.agent_display_name) query.set("agent_display_name", params.agent_display_name)
+  if (params?.status) query.set("status", params.status)
+  if (params?.direction) query.set("direction", params.direction)
+  if (params?.sort_by) query.set("sort_by", params.sort_by)
+  if (params?.sort_order) query.set("sort_order", params.sort_order)
+  const qs = query.toString()
+  const res = await fetch(`${API_BASE}/api/calls${qs ? `?${qs}` : ""}`)
+  if (!res.ok) throw new Error(`Failed to list calls: ${res.status}`)
+  return res.json()
+}
+
+export async function getCall(callId: string): Promise<import("./types").Call> {
+  const res = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(callId)}`)
+  if (!res.ok) throw new Error(`Failed to get call: ${res.status}`)
+  return res.json()
+}
+
+export async function getCallAgentNames(): Promise<{ display_name: string; agent_name: string }[]> {
+  const res = await fetch(`${API_BASE}/api/calls/agents`)
+  if (!res.ok) throw new Error(`Failed to get agent names: ${res.status}`)
+  const data = await res.json()
+  const list = data.agents ?? data.agent_names ?? data
+  if (Array.isArray(list)) {
+    if (list.length > 0 && typeof list[0] === "string") {
+      return list.map((name: string) => ({ display_name: name, agent_name: name }))
+    }
+    return list
+  }
+  return []
+}
+
+export async function getRecordingUrl(callId: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(callId)}/recording-url`)
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.url ?? null
+}
+
 // ── Batches ──
+
+export async function listBatches(): Promise<import("./types").Batch[]> {
+  const res = await fetch(`${API_BASE}/api/batches`)
+  if (!res.ok) throw new Error(`Failed to list batches: ${res.status}`)
+  const data = await res.json()
+  return data.batches ?? data
+}
+
+export async function getBatch(batchId: string): Promise<{
+  batch: import("./types").Batch
+  calls: import("./types").Call[]
+}> {
+  const res = await fetch(`${API_BASE}/api/batches/${encodeURIComponent(batchId)}`)
+  if (!res.ok) throw new Error(`Failed to get batch: ${res.status}`)
+  return res.json()
+}
+
+export async function getBatchDownloadUrl(batchId: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/api/batches/${encodeURIComponent(batchId)}/download-url`)
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.url ?? null
+}
+
+export async function deleteDraftBatch(batchId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/batches/${encodeURIComponent(batchId)}/draft`, {
+    method: "DELETE",
+  })
+}
 
 export async function uploadBatch(file: File, agentName: string, fromNumber: string) {
   const formData = new FormData()

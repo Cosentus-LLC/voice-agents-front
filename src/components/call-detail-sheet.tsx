@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { getCall } from "@/lib/api"
 import type { Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
 import { AudioPlayer } from "@/components/audio-player"
@@ -68,8 +69,20 @@ export function CallDetailSheet({
   )
 }
 
-function CallPanelContent({ call }: { call: Call }) {
+function CallPanelContent({ call: listCall }: { call: Call }) {
+  const [fullCall, setFullCall] = useState<Call | null>(null)
   const [copiedId, setCopiedId] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setFullCall(null)
+    getCall(listCall.id)
+      .then((data) => { if (!cancelled) setFullCall(data) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [listCall.id])
+
+  const call = fullCall ?? listCall
 
   const copyId = () => {
     navigator.clipboard.writeText(call.id)
@@ -138,7 +151,7 @@ function CallPanelContent({ call }: { call: Call }) {
           </div>
         )}
 
-        <AudioPlayer recordingPath={call.recording_path} />
+        <AudioPlayer callId={call.id} hasRecording={!!call.recording_path} />
 
         <section className="select-text">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">

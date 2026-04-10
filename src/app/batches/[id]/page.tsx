@@ -2,12 +2,11 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase"
 import type { Batch, Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
 import { CallDetailSheet } from "@/components/call-detail-sheet"
 import { formatDate, formatDuration, formatPhone, truncate } from "@/lib/utils"
-import { downloadResults, pauseBatch, resumeBatch, cancelBatch } from "@/lib/api"
+import { downloadResults, pauseBatch, resumeBatch, cancelBatch, getBatch, getBatchDownloadUrl } from "@/lib/api"
 import {
   Table,
   TableBody,
@@ -67,16 +66,14 @@ export default function BatchDetailPage({
   useEffect(() => {
     async function fetchData() {
       setLoading(true)
-      const [batchRes, callsRes] = await Promise.all([
-        supabase.from("batches").select("*").eq("id", id).single(),
-        supabase
-          .from("calls")
-          .select("*")
-          .eq("batch_id", id)
-          .order("batch_row_index", { ascending: true }),
-      ])
-      setBatch(batchRes.data as Batch | null)
-      setCalls((callsRes.data as Call[]) ?? [])
+      try {
+        const data = await getBatch(id)
+        setBatch(data.batch)
+        setCalls(data.calls ?? [])
+      } catch {
+        setBatch(null)
+        setCalls([])
+      }
       setLoading(false)
     }
     fetchData()
@@ -94,11 +91,9 @@ export default function BatchDetailPage({
 
   const handleDownloadOriginal = async () => {
     if (!batch?.input_file_path) return
-    const { data } = await supabase.storage
-      .from("batch-files")
-      .createSignedUrl(batch.input_file_path, 3600)
-    if (data?.signedUrl) {
-      window.open(data.signedUrl, "_blank")
+    const url = await getBatchDownloadUrl(id)
+    if (url) {
+      window.open(url, "_blank")
     }
   }
 

@@ -2,39 +2,41 @@
 
 import { useEffect, useState } from "react"
 import { Volume2, AlertCircle } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { getRecordingUrl } from "@/lib/api"
 
 interface AudioPlayerProps {
-  recordingPath: string | null
+  callId: string
+  hasRecording?: boolean
 }
 
-export function AudioPlayer({ recordingPath }: AudioPlayerProps) {
+export function AudioPlayer({ callId, hasRecording }: AudioPlayerProps) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!recordingPath) return
+    if (!hasRecording) return
 
     async function getUrl() {
       setLoading(true)
       setError(null)
-      const { data, error: err } = await supabase.storage
-        .from("recordings")
-        .createSignedUrl(recordingPath!, 3600)
-
-      if (err || !data?.signedUrl) {
+      try {
+        const url = await getRecordingUrl(callId)
+        if (url) {
+          setSignedUrl(url)
+        } else {
+          setError("Could not load recording")
+        }
+      } catch {
         setError("Could not load recording")
-      } else {
-        setSignedUrl(data.signedUrl)
       }
       setLoading(false)
     }
 
     getUrl()
-  }, [recordingPath])
+  }, [callId, hasRecording])
 
-  if (!recordingPath) {
+  if (!hasRecording) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-dashed border-border p-4">
         <Volume2 size={18} className="text-muted-foreground" />

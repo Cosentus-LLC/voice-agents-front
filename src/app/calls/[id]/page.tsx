@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase"
+import { getCall } from "@/lib/api"
 import type { Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
 import { TranscriptViewer } from "@/components/transcript-viewer"
@@ -26,8 +26,12 @@ export default function CallDetailPage({
   useEffect(() => {
     async function fetchCall() {
       setLoading(true)
-      const { data } = await supabase.from("calls").select("*").eq("id", id).single()
-      setCall(data as Call | null)
+      try {
+        const data = await getCall(id)
+        setCall(data)
+      } catch {
+        setCall(null)
+      }
       setLoading(false)
     }
     fetchCall()
@@ -128,7 +132,7 @@ export default function CallDetailPage({
           </div>
           <div className="surface-card p-6">
             <h2 className="mb-3 text-lg font-medium">Recording</h2>
-            <AudioPlayer recordingPath={call.recording_path} />
+            <AudioPlayer callId={call.id} hasRecording={!!call.recording_path} />
           </div>
         </div>
 

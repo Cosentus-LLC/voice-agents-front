@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase"
+import { listCalls, getCallAgentNames } from "@/lib/api"
 import type { Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
 import { CallDetailSheet } from "@/components/call-detail-sheet"
@@ -55,26 +55,27 @@ export default function CallsPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [directionFilter, setDirectionFilter] = useState("all")
   const [agentFilter, setAgentFilter] = useState("all")
-  const [agents, setAgents] = useState<string[]>([])
+  const [agentOptions, setAgentOptions] = useState<{ display_name: string; agent_name: string }[]>([])
   const [selectedCall, setSelectedCall] = useState<Call | null>(null)
 
   const fetchCalls = useCallback(async () => {
     setLoading(true)
-    let query = supabase
-      .from("calls")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-
-    if (statusFilter !== "all") query = query.eq("status", statusFilter)
-    if (directionFilter !== "all") query = query.eq("direction", directionFilter)
-    if (agentFilter !== "all") query = query.eq("agent_name", agentFilter)
-
-    const from = page * PAGE_SIZE
-    query = query.range(from, from + PAGE_SIZE - 1)
-
-    const { data, count } = await query
-    setCalls((data as Call[]) ?? [])
-    setTotal(count ?? 0)
+    try {
+      const res = await listCalls({
+        page: page + 1,
+        page_size: PAGE_SIZE,
+        status: statusFilter !== "all" ? statusFilter : undefined,
+        direction: directionFilter !== "all" ? directionFilter : undefined,
+        agent_display_name: agentFilter !== "all" ? agentFilter : undefined,
+        sort_by: "created_at",
+        sort_order: "desc",
+      })
+      setCalls(res.calls ?? [])
+      setTotal(res.total ?? 0)
+    } catch {
+      setCalls([])
+      setTotal(0)
+    }
     setLoading(false)
   }, [page, statusFilter, directionFilter, agentFilter])
 
@@ -82,10 +83,11 @@ export default function CallsPage() {
 
   useEffect(() => {
     async function fetchAgents() {
-      const { data } = await supabase.from("calls").select("agent_name")
-      if (data) {
-        const unique = [...new Set(data.map((d: { agent_name: string }) => d.agent_name))].filter(Boolean)
-        setAgents(unique as string[])
+      try {
+        const list = await getCallAgentNames()
+        setAgentOptions(Array.isArray(list) ? list : [])
+      } catch {
+        setAgentOptions([])
       }
     }
     fetchAgents()
@@ -132,8 +134,8 @@ export default function CallsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Agents</SelectItem>
-            {agents.map((a) => (
-              <SelectItem key={a} value={a}>{formatAgentName(a)}</SelectItem>
+            {agentOptions.map((a) => (
+              <SelectItem key={a.display_name} value={a.display_name}>{a.display_name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -244,7 +246,7 @@ export default function CallsPage() {
           </div>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between pt-4">
               <p className="text-sm text-muted-foreground">
                 Page {page + 1} of {totalPages}
               </p>

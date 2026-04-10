@@ -10,8 +10,8 @@ import {
   uploadBatch,
   updateBatchRows,
   startBatch,
+  deleteDraftBatch,
 } from "@/lib/api"
-import { supabase } from "@/lib/supabase"
 import type {
   AgentListItem,
   PhoneNumber,
@@ -392,12 +392,7 @@ export default function NewBatchPage() {
   useEffect(() => {
     return () => {
       if (batchIdRef.current && !batchStartedRef.current) {
-        supabase
-          .from("batches")
-          .delete()
-          .eq("id", batchIdRef.current)
-          .eq("status", "draft")
-          .then(() => {})
+        deleteDraftBatch(batchIdRef.current).catch(() => {})
       }
     }
   }, [])
@@ -449,11 +444,7 @@ export default function NewBatchPage() {
 
     // Delete previous draft if re-uploading
     if (batchIdRef.current) {
-      await supabase
-        .from("batches")
-        .delete()
-        .eq("id", batchIdRef.current)
-        .eq("status", "draft")
+      await deleteDraftBatch(batchIdRef.current).catch(() => {})
       batchIdRef.current = null
     }
 
@@ -1015,11 +1006,7 @@ export default function NewBatchPage() {
                 className="flex-1 bg-white"
                 onClick={async () => {
                   if (batchIdRef.current && !batchStartedRef.current) {
-                    await supabase
-                      .from("batches")
-                      .delete()
-                      .eq("id", batchIdRef.current)
-                      .eq("status", "draft")
+                    await deleteDraftBatch(batchIdRef.current).catch(() => {})
                   }
                   router.push("/batches")
                 }}
