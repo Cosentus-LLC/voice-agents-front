@@ -67,7 +67,7 @@ export function AgentToolCard({
     <div className="rounded-lg border border-black/[0.08] bg-white p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-semibold">{label}</span>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-0.5">
           {editing ? (
             readOnly ? (
               <Button type="button" variant="ghost" size="sm" className="h-8" onClick={cancelEdit}>

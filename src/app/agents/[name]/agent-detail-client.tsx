@@ -47,6 +47,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { PromptEditor } from "@/components/prompt-editor"
 import {
   Select,
   SelectContent,
@@ -704,10 +705,10 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                   </Select>
                 </div>
               </div>
-              <Textarea
-                className="w-full min-w-0 flex-1 resize-none overflow-y-auto bg-white font-[JetBrains_Mono,monospace] text-sm leading-relaxed"
+              <PromptEditor
+                className="w-full min-w-0 flex-1"
                 value={activeDraft.system_prompt}
-                onChange={(e) => setF({ system_prompt: e.target.value })}
+                onChange={(v) => setF({ system_prompt: v })}
                 placeholder="You are a helpful assistant..."
               />
             </CardContent>
@@ -725,7 +726,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
           <AgentConfigSection title="LLM">
             <FieldGroup className={cn("gap-5", isReadOnly && "pointer-events-none")}>
               <p className="text-xs text-muted-foreground">
-                Provider: <span className="font-medium text-foreground">anthropic</span> · Model switch is in the bar above.
+                Provider: <span className="font-medium text-foreground">anthropic</span> · Model selector is in the quick bar.
               </p>
             <SchemaSlider
               label="Temperature"
@@ -965,7 +966,10 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                   }
                 >
                   <SelectTrigger className="h-9 w-full">
-                    <SelectValue placeholder="Select model" />
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <img src="/anthropic-logo.svg" alt="" className="size-3.5 shrink-0" />
+                      <span className="min-w-0 truncate"><SelectValue placeholder="Select model" /></span>
+                    </span>
                   </SelectTrigger>
                   <SelectContent>
                     {schema.llm_models.map((m) => (
