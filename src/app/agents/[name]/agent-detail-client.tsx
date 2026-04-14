@@ -3,15 +3,18 @@
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
+  getAgentDraft,
   getAgentPrompt,
   getAgentSchema,
   getLiveAgentForDraft,
+  listAgentVersions,
+  publishAgentVersion,
+  saveAgentDraft,
   updateAgent,
   updateAgentPrompt,
   getPhoneNumbers,
   updatePhoneNumber,
 } from "@/lib/api"
-import { supabase } from "@/lib/supabase"
 import type { AgentDraft, AgentSchema, AgentVersion, PhoneNumber, PostCallField } from "@/lib/types"
 import {
   apiResponseToDraftRow,
@@ -184,13 +187,9 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
       const sch = await getAgentSchema()
       setSchema(sch)
 
-      const { data: row, error } = await supabase
-        .from("agent_drafts")
-        .select("*")
-        .eq("name", decodedName)
-        .maybeSingle()
+      const row = await getAgentDraft(decodedName)
 
-      if (error || !row) {
+      if (!row) {
         setMissingDraft(true)
         setDraft(null)
         setVersions([])
@@ -198,20 +197,16 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
         return
       }
 
-      const d = row as AgentDraft
+      const d = row as unknown as AgentDraft
       const normalized = apiResponseToDraftRow(d, {
         agent_id: d.agent_id,
         has_unpublished_changes: d.has_unpublished_changes,
       }) as unknown as AgentDraft
       setDraft(normalized)
 
-      const { data: vers } = await supabase
-        .from("agent_versions")
-        .select("*")
-        .eq("agent_id", d.agent_id)
-        .order("version_number", { ascending: false })
+      const vers = await listAgentVersions(decodedName)
 
-      setVersions((vers as AgentVersion[]) ?? [])
+      setVersions(vers ?? [])
 
       const nextNum = vers?.length ? (vers as AgentVersion[])[0]!.version_number + 1 : 1
       setVersionName(`V${nextNum}`)
@@ -262,24 +257,18 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
   }, [publishOpen, draft?.agent_id])
 
   const patchDraft = useCallback(async (patch: Record<string, unknown>) => {
-    let agentId: string | null = null
     setDraft((prev) => {
       if (!prev) return prev
-      agentId = prev.agent_id
       return { ...prev, ...patch, has_unpublished_changes: true } as AgentDraft
     })
-    if (!agentId) return
-    const { error } = await supabase
-      .from("agent_drafts")
-      .update({ ...patch, has_unpublished_changes: true })
-      .eq("agent_id", agentId)
-    if (error) {
-      toast.error(error.message)
-      load()
-    } else {
+    try {
+      await saveAgentDraft(decodedName, { ...patch, has_unpublished_changes: true })
       toast.success("Draft saved", { id: "draft-patch", duration: 900 })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save draft")
+      load()
     }
-  }, [load])
+  }, [load, decodedName])
 
   const initDraftFromLive = async () => {
     try {
@@ -288,11 +277,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
         agent_id: live.id,
         has_unpublished_changes: false,
       })
-      const { error } = await supabase.from("agent_drafts").insert(row)
-      if (error) {
-        toast.error(error.message)
-        return
-      }
+      await saveAgentDraft(decodedName, row)
       toast.success("Draft initialized from live agent")
       load()
     } catch (e) {
@@ -306,8 +291,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
     try {
       const live = await getLiveAgentForDraft(decodedName)
       const row = liveAgentToDraftRow(live, draft.agent_id)
-      const { error } = await supabase.from("agent_drafts").update(row).eq("agent_id", draft.agent_id)
-      if (error) throw new Error(error.message)
+      await saveAgentDraft(decodedName, row)
       toast.success("Draft discarded")
       setDiscardOpen(false)
       load()
@@ -398,26 +382,25 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
       if (p) assignments.push({ number: p.number, friendly_name: p.friendly_name, direction: "outbound" })
     }
 
-    const { error: vErr } = await supabase.from("agent_versions").insert({
-      agent_id: draft.agent_id,
-      version_number: nextNum,
-      version_name: versionName.trim() || `V${nextNum}`,
-      description: versionDesc.trim(),
-      config_snapshot: snapshotFromDraft(draft),
-      phone_assignments: assignments,
-      published_at: new Date().toISOString(),
-      published_by: null,
-    })
-    if (vErr) {
-      issues.push(`Version history not saved: ${vErr.message}`)
+    try {
+      await publishAgentVersion(decodedName, {
+        agent_id: draft.agent_id,
+        version_number: nextNum,
+        version_name: versionName.trim() || `V${nextNum}`,
+        description: versionDesc.trim(),
+        config_snapshot: snapshotFromDraft(draft),
+        phone_assignments: assignments,
+        published_at: new Date().toISOString(),
+        published_by: null,
+      })
+    } catch (e) {
+      issues.push(`Version history not saved: ${e instanceof Error ? e.message : "unknown error"}`)
     }
 
-    const { error: dErr } = await supabase
-      .from("agent_drafts")
-      .update({ has_unpublished_changes: false })
-      .eq("agent_id", draft.agent_id)
-    if (dErr) {
-      issues.push(`Draft not marked published: ${dErr.message}`)
+    try {
+      await saveAgentDraft(decodedName, { has_unpublished_changes: false })
+    } catch (e) {
+      issues.push(`Draft not marked published: ${e instanceof Error ? e.message : "unknown error"}`)
     }
 
     if (issues.length === 0) {
@@ -439,13 +422,13 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
       agent_id: draft.agent_id,
       has_unpublished_changes: true,
     })
-    const { error } = await supabase.from("agent_drafts").update(row).eq("agent_id", draft.agent_id)
-    if (error) {
-      toast.error(error.message)
-      return
+    try {
+      await saveAgentDraft(decodedName, row)
+      toast.success(`Draft reverted to V${v.version_number}. Publish to make it live.`)
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Revert failed")
     }
-    toast.success(`Draft reverted to V${v.version_number}. Publish to make it live.`)
-    load()
   }
 
   const promptVars = useMemo(() => extractPromptVariables(draft?.system_prompt ?? ""), [draft?.system_prompt])

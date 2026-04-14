@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { cloneAgent, createAgent, deleteAgent, getAgents, getAgent, getPhoneNumbers, getVoices } from "@/lib/api"
+import { cloneAgent, createAgent, deleteAgent, getAgents, getAgent, getPhoneNumbers, getVoices, saveAgentDraft } from "@/lib/api"
 import { apiResponseToDraftRow } from "@/lib/agent-draft"
-import { supabase } from "@/lib/supabase"
 import type { Agent, AgentListItem, PhoneNumber, Voice } from "@/lib/types"
 import { formatPhone } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -143,7 +142,7 @@ export default function AgentsPage() {
         agent_id: created.id,
         has_unpublished_changes: false,
       })
-      await supabase.from("agent_drafts").insert(draftRow)
+      await saveAgentDraft(created.name, draftRow)
       toast.success("Agent cloned")
       setCloneOpen(false)
       setCloneTarget(null)
@@ -204,12 +203,12 @@ export default function AgentsPage() {
         agent_id: created.id,
         has_unpublished_changes: false,
       })
-      const { error: insErr } = await supabase.from("agent_drafts").insert(draftRow)
-      if (insErr) {
-        toast.error(`Agent created but draft row failed: ${insErr.message}`)
-      } else {
-        toast.success("Agent created")
+      try {
+        await saveAgentDraft(slug, draftRow)
+      } catch (draftErr) {
+        toast.error(`Agent created but draft row failed: ${draftErr instanceof Error ? draftErr.message : "unknown error"}`)
       }
+      toast.success("Agent created")
       setCreateOpen(false)
       setCreateName("")
       router.push(`/agents/${encodeURIComponent(created.name)}`)

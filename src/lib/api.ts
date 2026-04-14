@@ -205,6 +205,52 @@ export async function downloadResults(batchId: string) {
   return res.blob()
 }
 
+// ── Agent Drafts ──
+
+export async function getAgentDraft(agentName: string): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${API_BASE}/api/agents/${encodeURIComponent(agentName)}/draft`)
+  if (!res.ok) return null
+  const data = await res.json()
+  return data.draft ?? data
+}
+
+export async function saveAgentDraft(agentName: string, draftData: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/agents/${encodeURIComponent(agentName)}/draft`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draftData),
+  })
+  if (!res.ok) {
+    const body = await parseErrorBody(res)
+    throwFromApiBody(body)
+  }
+}
+
+// ── Agent Versions ──
+
+export async function listAgentVersions(agentName: string): Promise<import("./types").AgentVersion[]> {
+  const res = await fetch(`${API_BASE}/api/agents/${encodeURIComponent(agentName)}/versions`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.versions ?? data
+}
+
+export async function publishAgentVersion(
+  agentName: string,
+  publishData: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/api/agents/${encodeURIComponent(agentName)}/versions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(publishData),
+  })
+  if (!res.ok) {
+    const body = await parseErrorBody(res)
+    throwFromApiBody(body)
+  }
+  return res.json()
+}
+
 // ── Agents ──
 
 export async function getAgents(): Promise<AgentListItem[]> {
