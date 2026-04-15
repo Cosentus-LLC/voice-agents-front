@@ -554,7 +554,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
               variant="outline"
               size="icon-sm"
               className={cn(
-                "bg-white hover:bg-[var(--color-brand-light)]/60",
+                "bg-white hover:bg-black/[0.04]",
                 historyOpen && "bg-[var(--color-brand-light)] text-[var(--color-brand)]"
               )}
               title="Version history"
@@ -652,7 +652,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                 <div className="flex min-w-0 flex-[3] flex-col gap-1.5">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">LLM Model</span>
                   <Select value={activeDraft.llm_model} onValueChange={(v) => setF({ llm_model: v ?? "" })}>
-                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-[var(--color-brand-light)]/60" aria-label="LLM model">
+                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-black/[0.04]" aria-label="LLM model">
                       <span className="flex min-w-0 items-center gap-1.5 truncate">
                         {activeDraft.llm_model && <img src="/anthropic-logo.svg" alt="" className="size-3.5 shrink-0" />}
                         <span className="min-w-0 truncate"><SelectValue placeholder="Model" /></span>
@@ -670,14 +670,14 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                   <VoicePicker
                     value={activeDraft.tts_voice_id}
                     onChange={(id) => setF({ tts_voice_id: id })}
-                    className="w-full border-0 hover:bg-[var(--color-brand-light)]/60"
+                    className="w-full border-0 hover:bg-black/[0.04]"
                     initialVoices={resolvedVoices}
                   />
                 </div>
                 <div className="flex min-w-0 flex-[3] flex-col gap-1.5">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">TTS Model</span>
                   <Select value={activeDraft.tts_model} onValueChange={(v) => setF({ tts_model: v ?? "" })}>
-                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-[var(--color-brand-light)]/60" aria-label="Voice model">
+                    <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-black/[0.04]" aria-label="Voice model">
                       <SelectValue placeholder="Voice model" />
                     </SelectTrigger>
                     <SelectContent>

@@ -551,7 +551,7 @@ export function TestCallPanel({
               >
                 <CollapsibleTrigger
                   className={cn(
-                    "group flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium outline-none transition-colors hover:bg-[var(--color-brand-light)]/60",
+                    "group flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium outline-none transition-colors hover:bg-black/[0.04]",
                     "focus-visible:ring-2 focus-visible:ring-ring/50"
                   )}
                 >
