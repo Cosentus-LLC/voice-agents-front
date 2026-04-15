@@ -547,11 +547,11 @@ export function TestCallPanel({
             {promptVariables.length > 0 && (
               <Collapsible
                 defaultOpen={false}
-                className="w-full rounded-lg bg-white text-left"
+                className="w-full overflow-hidden rounded-lg bg-white text-left"
               >
                 <CollapsibleTrigger
                   className={cn(
-                    "group flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium outline-none transition-colors hover:bg-black/[0.04]",
+                    "group flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left text-sm font-medium outline-none transition-colors hover:bg-black/[0.04]",
                     "focus-visible:ring-2 focus-visible:ring-ring/50"
                   )}
                 >

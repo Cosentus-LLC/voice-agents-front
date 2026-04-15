@@ -1,5 +1,6 @@
 "use client"
 
+import { Fragment } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
@@ -134,11 +135,14 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="group-data-[collapsible=icon]:gap-2 group-data-[collapsible=icon]:py-2">
-        {sections.map((section) => (
-          <SidebarGroup
-            key={section.label}
-            className="group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0"
-          >
+        {sections.map((section, idx) => (
+          <Fragment key={section.label}>
+            {idx > 0 && (
+              <div className="mx-auto hidden w-6 border-t border-black/[0.08] group-data-[collapsible=icon]:block" />
+            )}
+            <SidebarGroup
+              className="group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0"
+            >
             <SidebarGroupLabel className="text-xs font-medium uppercase tracking-[0.05em] text-muted-foreground">
               {section.label}
             </SidebarGroupLabel>
@@ -169,6 +173,7 @@ export function AppSidebar() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+          </Fragment>
         ))}
       </SidebarContent>
 

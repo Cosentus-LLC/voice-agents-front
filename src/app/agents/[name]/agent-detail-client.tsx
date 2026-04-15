@@ -231,9 +231,12 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
         const active = list.filter((p) => p.is_active !== false)
         if (cancelled) return
         setPublishModalPhones(active)
-        const agentUuid = draft.agent_id
-        const inbound = active.find((p) => p.inbound_agent?.id === agentUuid)
-        const outbound = active.find((p) => p.outbound_agent?.id === agentUuid)
+        const agentUuid = draft.agent_id || draft.id
+        const agentName = draft.name
+        const matchesAgent = (a: { id: string; name: string } | null) =>
+          a != null && (a.id === agentUuid || a.name === agentName)
+        const inbound = active.find((p) => matchesAgent(p.inbound_agent))
+        const outbound = active.find((p) => matchesAgent(p.outbound_agent))
         setPubInboundOn(!!inbound)
         setPubOutboundOn(!!outbound)
         setPubInboundId(inbound?.id ?? "")
@@ -254,7 +257,7 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
     return () => {
       cancelled = true
     }
-  }, [publishOpen, draft?.agent_id])
+  }, [publishOpen, draft?.agent_id, draft?.id, draft?.name])
 
   const patchDraft = useCallback(async (patch: Record<string, unknown>) => {
     setDraft((prev) => {
@@ -344,13 +347,16 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
       return
     }
 
-    const agentId = draft.agent_id
+    const agentId = draft.agent_id || draft.id
+    const agentName = draft.name
 
     try {
       const list = await getPhoneNumbers()
       const active = list.filter((p) => p.is_active !== false)
-      const curInbound = active.find((p) => p.inbound_agent?.id === agentId)?.id ?? null
-      const curOutbound = active.find((p) => p.outbound_agent?.id === agentId)?.id ?? null
+      const matchAgent = (a: { id: string; name: string } | null) =>
+        a != null && (a.id === agentId || a.name === agentName)
+      const curInbound = active.find((p) => matchAgent(p.inbound_agent))?.id ?? null
+      const curOutbound = active.find((p) => matchAgent(p.outbound_agent))?.id ?? null
       const wantInbound = pubInboundOn ? normalizeRoutePhoneId(pubInboundId) : null
       const wantOutbound = pubOutboundOn ? normalizeRoutePhoneId(pubOutboundId) : null
 
