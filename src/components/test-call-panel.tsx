@@ -4,13 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
-import { ChevronRight, Info, Mic, Phone, Wrench } from "lucide-react"
+import { Info, Mic, Phone, SlidersHorizontal, Wrench } from "lucide-react"
 import { cn, formatTime } from "@/lib/utils"
 import type {
   BotLLMTextData,
@@ -538,72 +538,65 @@ export function TestCallPanel({
           <Phone className="size-4 text-[var(--color-brand)]" aria-hidden />
           Test call
           {titleSuffix}
+          {promptVariables.length > 0 && (
+            <Popover>
+              <PopoverTrigger
+                className={cn(
+                  "relative ml-auto inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground",
+                  filledCount > 0 && "text-[var(--color-brand)]"
+                )}
+                title="Test Variables"
+              >
+                <SlidersHorizontal size={15} />
+                {filledCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-[var(--color-brand)] text-[9px] font-bold text-white">
+                    {filledCount}
+                  </span>
+                )}
+              </PopoverTrigger>
+              <PopoverContent side="left" sideOffset={8} align="start" className="w-72 p-0">
+                <div className="flex items-center justify-between border-b px-3 py-2.5">
+                  <span className="text-sm font-medium">Test Variables</span>
+                  {filledCount > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+                      onClick={clearAllTestVariables}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-[min(320px,50vh)] space-y-2.5 overflow-y-auto p-3">
+                  {promptVariables.map((key, i) => (
+                    <div key={key} className="space-y-1">
+                      <Label
+                        htmlFor={`test-call-var-${i}`}
+                        className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                      >
+                        {key}
+                      </Label>
+                      <Input
+                        id={`test-call-var-${i}`}
+                        value={testVarValues[key] ?? ""}
+                        onChange={(e) =>
+                          setTestVarValues((prev) => ({ ...prev, [key]: e.target.value }))
+                        }
+                        placeholder="Enter value"
+                        className="h-9 border border-black/[0.06] bg-background shadow-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </CardTitle>
         <p className="text-xs text-muted-foreground">Use your microphone to talk to this agent using draft settings.</p>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2">
         {showIdleChrome && (
           <div className="flex flex-1 flex-col gap-3 py-2">
-            {promptVariables.length > 0 && (
-              <Collapsible
-                defaultOpen={false}
-                className="w-full overflow-hidden rounded-lg text-left"
-              >
-                <CollapsibleTrigger
-                  className={cn(
-                    "group flex w-full items-center gap-2 rounded-lg px-4 py-3 text-left text-sm font-medium outline-none transition-colors hover:bg-black/[0.04]",
-                    "focus-visible:ring-2 focus-visible:ring-ring/50"
-                  )}
-                >
-                  <ChevronRight
-                    className="size-4 shrink-0 transition-transform duration-200 group-data-[panel-open]:rotate-90"
-                    aria-hidden
-                  />
-                  <span>Test Variables</span>
-                  <span className="ml-auto hidden shrink-0 text-xs font-normal tabular-nums text-muted-foreground lg:inline">
-                    {filledCount > 0
-                      ? `${filledCount} of ${promptVariables.length} filled`
-                      : `${promptVariables.length} variable${promptVariables.length === 1 ? "" : "s"} available`}
-                  </span>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="px-4 pb-4 pt-1">
-                    <div className="-mx-1 max-h-[min(280px,40vh)] space-y-2.5 overflow-y-auto px-1">
-                      {promptVariables.map((key, i) => (
-                        <div key={key} className="space-y-1">
-                          <Label
-                            htmlFor={`test-call-var-${i}`}
-                            className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                          >
-                            {key}
-                          </Label>
-                          <Input
-                            id={`test-call-var-${i}`}
-                            value={testVarValues[key] ?? ""}
-                            onChange={(e) =>
-                              setTestVarValues((prev) => ({ ...prev, [key]: e.target.value }))
-                            }
-                            placeholder="Enter value"
-                            className="h-9 border border-black/[0.06] bg-background shadow-none"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    {filledCount > 0 && (
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          className="text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
-                          onClick={clearAllTestVariables}
-                        >
-                          Clear All
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
             <div className="flex flex-1 flex-col items-center justify-center gap-4 py-2 text-center">
               <div className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
                 <Mic className="size-8" aria-hidden />

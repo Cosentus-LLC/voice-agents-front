@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { listCalls, getCallAgentNames } from "@/lib/api"
+import { listCalls, getCallAgentNames, hideCall } from "@/lib/api"
 import type { Call } from "@/lib/types"
 import { StatusBadge } from "@/components/status-badge"
 import { CallDetailSheet } from "@/components/call-detail-sheet"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import {
   formatAgentName,
   formatDuration,
@@ -34,7 +35,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  EyeOff,
 } from "lucide-react"
+import { toast } from "sonner"
 
 const PAGE_SIZE = 20
 
@@ -57,6 +60,8 @@ export default function CallsPage() {
   const [agentFilter, setAgentFilter] = useState("all")
   const [agentOptions, setAgentOptions] = useState<{ display_name: string; agent_name: string }[]>([])
   const [selectedCall, setSelectedCall] = useState<Call | null>(null)
+  const [hideTarget, setHideTarget] = useState<Call | null>(null)
+  const [hiding, setHiding] = useState(false)
 
   const fetchCalls = useCallback(async () => {
     setLoading(true)
@@ -92,6 +97,22 @@ export default function CallsPage() {
     }
     fetchAgents()
   }, [])
+
+  const handleHide = async () => {
+    if (!hideTarget) return
+    setHiding(true)
+    try {
+      await hideCall(hideTarget.id)
+      setCalls((prev) => prev.filter((c) => c.id !== hideTarget.id))
+      setTotal((t) => Math.max(0, t - 1))
+      toast.success("Call hidden from history")
+    } catch {
+      toast.error("Failed to hide call")
+    } finally {
+      setHiding(false)
+      setHideTarget(null)
+    }
+  }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const hasFilters = statusFilter !== "all" || directionFilter !== "all" || agentFilter !== "all"
@@ -228,7 +249,7 @@ export default function CallsPage() {
                       {relativeTime(call.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end opacity-0 transition-opacity group-hover/row:opacity-100">
+                      <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100">
                         <Link
                           href={`/calls/${call.id}`}
                           onClick={(e) => e.stopPropagation()}
@@ -237,6 +258,14 @@ export default function CallsPage() {
                         >
                           <ExternalLink size={15} />
                         </Link>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setHideTarget(call) }}
+                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
+                          title="Hide call"
+                        >
+                          <EyeOff size={15} />
+                        </button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -267,6 +296,16 @@ export default function CallsPage() {
       <CallDetailSheet
         call={selectedCall}
         onClose={() => setSelectedCall(null)}
+      />
+
+      <ConfirmDeleteDialog
+        open={!!hideTarget}
+        onOpenChange={(open) => { if (!open) setHideTarget(null) }}
+        title="Hide this call?"
+        description="Hide this call from history? The data is preserved but won't appear in the list."
+        confirmLabel="Hide"
+        onConfirm={handleHide}
+        confirming={hiding}
       />
     </div>
   )
