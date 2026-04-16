@@ -547,7 +547,7 @@ export function TestCallPanel({
             {promptVariables.length > 0 && (
               <Collapsible
                 defaultOpen={false}
-                className="w-full overflow-hidden rounded-lg bg-white text-left"
+                className="w-full overflow-hidden rounded-lg text-left"
               >
                 <CollapsibleTrigger
                   className={cn(

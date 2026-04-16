@@ -25,7 +25,7 @@ async function parseErrorBody(res: Response): Promise<unknown> {
   }
 }
 
-// ── Calls ──
+// ── Calls ─────────────────────────────────────────────────────────
 
 export async function listCalls(params?: {
   page?: number

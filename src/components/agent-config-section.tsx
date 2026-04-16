@@ -26,7 +26,7 @@ export function AgentConfigSection({
     >
       <CollapsibleTrigger
         className={cn(
-          "group flex w-full items-center gap-2 px-4 py-4 text-left text-[14px] font-semibold outline-none transition-colors hover:bg-muted/40",
+          "group flex w-full items-center gap-2 px-4 py-4 text-left text-[14px] font-semibold outline-none",
           "focus-visible:ring-2 focus-visible:ring-ring/50"
         )}
       >
