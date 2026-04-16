@@ -94,7 +94,7 @@ export function formatAgentName(name: string): string {
     .split("/")
     .map((part) =>
       part
-        .split("_")
+        .split(/[-_]/)
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(" ")
     )

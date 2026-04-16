@@ -94,12 +94,12 @@ export async function getCallAgentNames(): Promise<{ display_name: string; agent
   return []
 }
 
-export async function hideCall(callId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(callId)}/hide`, {
-    method: "PUT",
+export async function deleteCall(callId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/calls/${encodeURIComponent(callId)}`, {
+    method: "DELETE",
     headers: authHeaders(),
   })
-  if (!res.ok) throw new Error(`Failed to hide call: ${res.status}`)
+  if (!res.ok) throw new Error(`Failed to delete call: ${res.status}`)
 }
 
 export async function getRecordingUrl(callId: string): Promise<string | null> {
