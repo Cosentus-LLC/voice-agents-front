@@ -677,16 +677,29 @@ export default function AgentDetailClient({ encodedName }: { encodedName: string
                 </div>
                 <div className="flex min-w-0 flex-[4] flex-col gap-1.5">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Voice</span>
+                  {/*
+                    Voice + TTS Model changes also write `tts_provider` in the
+                    same PUT. Without this, a single-field update can leave the
+                    draft in an impossible state (e.g. tts_provider="fish" with
+                    an ElevenLabs model / voice_id), which the Lambda publish
+                    validator then rejects. VoicePicker + the model dropdown
+                    below both source from the ElevenLabs-backed /api/voices
+                    and schema.tts_models, so any selection here is by
+                    definition ElevenLabs — we state that fact explicitly.
+                  */}
                   <VoicePicker
                     value={activeDraft.tts_voice_id}
-                    onChange={(id) => setF({ tts_voice_id: id })}
+                    onChange={(id) => setF({ tts_voice_id: id, tts_provider: "elevenlabs" })}
                     className="w-full border-0 hover:bg-black/[0.04]"
                     initialVoices={resolvedVoices}
                   />
                 </div>
                 <div className="flex min-w-0 flex-[3] flex-col gap-1.5">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">TTS Model</span>
-                  <Select value={activeDraft.tts_model} onValueChange={(v) => setF({ tts_model: v ?? "" })}>
+                  <Select
+                    value={activeDraft.tts_model}
+                    onValueChange={(v) => setF({ tts_model: v ?? "", tts_provider: "elevenlabs" })}
+                  >
                     <SelectTrigger className="h-9 w-full bg-white text-xs hover:bg-black/[0.04]" aria-label="Voice model">
                       <SelectValue placeholder="Voice model" />
                     </SelectTrigger>
