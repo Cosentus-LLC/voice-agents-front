@@ -160,6 +160,8 @@ export interface AgentVersion {
   published_by: string | null
 }
 
+export type PhoneNumberProvider = "twilio" | "daily"
+
 export interface PhoneNumber {
   id: string
   number: string
@@ -167,6 +169,19 @@ export interface PhoneNumber {
   inbound_agent: { id: string; name: string; display_name: string } | null
   outbound_agent: { id: string; name: string; display_name: string } | null
   is_active: boolean
+  /**
+   * Where the number was purchased from. `'twilio'` for the legacy numbers
+   * that pre-date the Daily migration (April 2026); `'daily'` for any
+   * number bought after the migration landed. The Lambda defaults missing
+   * column values to `'twilio'` during schema migration, so older rows
+   * always surface as twilio.
+   */
+  provider?: PhoneNumberProvider
+  /**
+   * Daily's own UUID for the number. Required to release a Daily number;
+   * always null / absent for twilio rows.
+   */
+  daily_number_id?: string | null
 }
 
 export interface AgentSchema {

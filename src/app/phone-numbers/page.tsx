@@ -9,6 +9,7 @@ import {
   searchAvailableNumbers,
   purchaseNumber,
   releaseNumber,
+  type PhoneNumberProvider,
 } from "@/lib/api"
 import type { AgentListItem, PhoneNumber } from "@/lib/types"
 import { cn, formatPhone, formatPhoneNumberLabel } from "@/lib/utils"
@@ -60,6 +61,30 @@ function rowToEdit(p: PhoneNumber): RowEdit {
   }
 }
 
+/**
+ * Small badge next to each number indicating which provider it was bought
+ * through. Daily is the new default (neutral green); Twilio is the legacy
+ * path (amber) so it stands out as "pre-migration inventory".
+ */
+function ProviderBadge({ provider }: { provider: PhoneNumberProvider }) {
+  const label = provider === "daily" ? "Daily" : "Twilio"
+  const cls =
+    provider === "daily"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+      : "bg-amber-50 text-amber-700 ring-amber-600/20"
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ring-1 ring-inset",
+        cls
+      )}
+      title={`Provisioned via ${label}`}
+    >
+      {label}
+    </span>
+  )
+}
+
 /** Lighter than `bg-secondary` controls — subtle row hover on this page only */
 const PHONE_TABLE_ROW_HOVER = "group-hover/row:bg-black/[0.02]"
 
@@ -72,12 +97,13 @@ export default function PhoneNumbersPage() {
   const [syncing, setSyncing] = useState(false)
 
   const [buyOpen, setBuyOpen] = useState(false)
+  const [buyProvider, setBuyProvider] = useState<PhoneNumberProvider>("daily")
   const [buyCountry, setBuyCountry] = useState("US")
-  const [buyQuery, setBuyQuery] = useState("")
+  const [buyAreaCode, setBuyAreaCode] = useState("")
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [searchResults, setSearchResults] = useState<
-    { number: string; city?: string; region?: string; price?: string }[]
+    { number: string; city?: string; region?: string; price?: string; provider?: PhoneNumberProvider }[]
   >([])
   const [selectedNumber, setSelectedNumber] = useState<string>("")
   const [purchaseFriendly, setPurchaseFriendly] = useState("")
@@ -192,13 +218,21 @@ export default function PhoneNumbersPage() {
     setPurchaseError(null)
     setSearching(true)
     try {
-      const q = buyQuery.trim()
-      const params: { country?: string; area_code?: string; contains?: string; limit?: number } = {
+      const q = buyAreaCode.trim()
+      if (!/^\d{3}$/.test(q)) {
+        setSearchError("Enter a 3-digit area code (e.g. 209, 212, 415).")
+        setSearchResults([])
+        setSelectedNumber("")
+        setSearching(false)
+        return
+      }
+
+      const params = {
+        provider: buyProvider,
+        area_code: q,
         country: buyCountry,
         limit: 30,
       }
-      if (/^\d{3}$/.test(q)) params.area_code = q
-      else if (q) params.contains = q
 
       const data = await searchAvailableNumbers(params)
       const rawList = (data?.available_numbers ?? data?.numbers ?? data?.results ?? data) as unknown
@@ -218,13 +252,26 @@ export default function PhoneNumbersPage() {
               : typeof priceRaw === "string"
                 ? priceRaw
                 : undefined
-          return { number, city, region, price }
+          return { number, city, region, price, provider: buyProvider }
         })
-        .filter(Boolean) as { number: string; city?: string; region?: string; price?: string }[]
+        .filter(Boolean) as {
+          number: string
+          city?: string
+          region?: string
+          price?: string
+          provider?: PhoneNumberProvider
+        }[]
 
       setSearchResults(normalized)
       if (!normalized.some((r) => r.number === selectedNumber)) {
         setSelectedNumber("")
+      }
+      if (normalized.length === 0 && !data?.note) {
+        setSearchError(
+          buyProvider === "twilio"
+            ? "No numbers matched. Twilio search isn't fully wired yet — try Daily."
+            : `No Daily numbers available for area code ${q} right now. Try another area code.`
+        )
       }
     } catch (e) {
       setSearchResults([])
@@ -243,10 +290,14 @@ export default function PhoneNumbersPage() {
     setPurchasing(true)
     try {
       const friendly = purchaseFriendly.trim() || selectedNumber
-      await purchaseNumber({ number: selectedNumber, friendly_name: friendly })
-      toast.success(`Purchased ${formatPhone(selectedNumber)}`)
+      await purchaseNumber({
+        provider: buyProvider,
+        number: selectedNumber,
+        friendly_name: friendly,
+      })
+      toast.success(`Purchased ${formatPhone(selectedNumber)} (${buyProvider})`)
       setBuyOpen(false)
-      setBuyQuery("")
+      setBuyAreaCode("")
       setSearchResults([])
       setSelectedNumber("")
       setPurchaseFriendly("")
@@ -364,10 +415,14 @@ export default function PhoneNumbersPage() {
               {phones.map((p) => {
                 const e = edits[p.id] ?? rowToEdit(p)
                 const saving = savingId === p.id
+                const provider: PhoneNumberProvider = (p.provider as PhoneNumberProvider) ?? "twilio"
                 return (
                   <TableRow key={p.id}>
                     <TableCell className={cn(PHONE_TABLE_ROW_HOVER, "font-mono text-sm")}>
-                      {formatPhone(p.number)}
+                      <div className="flex items-center gap-2">
+                        <span>{formatPhone(p.number)}</span>
+                        <ProviderBadge provider={provider} />
+                      </div>
                     </TableCell>
                     <TableCell className={cn(PHONE_TABLE_ROW_HOVER, "max-w-[240px]")}>
                       {editingNameId === p.id ? (
@@ -485,7 +540,7 @@ export default function PhoneNumbersPage() {
                                   setReleaseError(null)
                                   setReleaseTarget(p)
                                 }}
-                                aria-label="Release number from Twilio"
+                                aria-label={`Release number from ${provider === "daily" ? "Daily" : "Twilio"}`}
                               />
                             }
                           >
@@ -520,8 +575,8 @@ export default function PhoneNumbersPage() {
             <DialogHeader className="space-y-3 text-left">
               <DialogTitle className="text-lg font-semibold tracking-tight">Buy phone number</DialogTitle>
               <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
-                Search Twilio inventory, choose a number, and add it to your workspace. Billed by
-                Twilio at ~$1.15/mo for local or ~$2.15/mo for toll-free.
+                Search available numbers by area code, choose one, and add it to your workspace.
+                Defaults to Daily; switch to Twilio if you have legacy inventory to match.
               </DialogDescription>
             </DialogHeader>
 
@@ -530,6 +585,27 @@ export default function PhoneNumbersPage() {
                 Search inventory
               </p>
               <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label>Provider</Label>
+                  <Select
+                    value={buyProvider}
+                    onValueChange={(v) => {
+                      const p = (v ?? "daily") as PhoneNumberProvider
+                      setBuyProvider(p)
+                      setSearchResults([])
+                      setSelectedNumber("")
+                    }}
+                  >
+                    <SelectTrigger className="h-9 w-full max-w-md border border-black/[0.06] bg-background shadow-none hover:bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="twilio">Twilio (legacy)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>Country</Label>
                   <Select value={buyCountry} onValueChange={(v) => setBuyCountry(v ?? "US")}>
@@ -543,12 +619,15 @@ export default function PhoneNumbersPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Area code or digits</Label>
+                  <Label>Area code</Label>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
                     <Input
-                      value={buyQuery}
-                      onChange={(e) => setBuyQuery(e.target.value)}
-                      placeholder="e.g. 415 or partial number"
+                      value={buyAreaCode}
+                      onChange={(e) => setBuyAreaCode(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                      placeholder="3-digit area code, e.g. 209"
+                      maxLength={3}
+                      inputMode="numeric"
+                      pattern="[0-9]{3}"
                       className="h-9 min-w-0 flex-1"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
@@ -560,7 +639,7 @@ export default function PhoneNumbersPage() {
                     <Button
                       type="button"
                       onClick={() => void runSearch()}
-                      disabled={searching}
+                      disabled={searching || buyAreaCode.length !== 3}
                       className="h-9 shrink-0 sm:w-[7.5rem]"
                     >
                       {searching ? (
@@ -627,7 +706,7 @@ export default function PhoneNumbersPage() {
                             </div>
                           </div>
                           <div className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                            {r.price ?? "~$1.15/mo"}
+                            {r.price ?? (buyProvider === "daily" ? "~$1/mo" : "~$1.15/mo")}
                           </div>
                         </button>
                       )
@@ -658,8 +737,18 @@ export default function PhoneNumbersPage() {
                   />
                 </div>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Estimated <span className="font-medium text-foreground/80">~$1.15/month</span> for local,{" "}
-                  <span className="font-medium text-foreground/80">~$2.15/month</span> for toll-free (billed by Twilio).
+                  {buyProvider === "daily" ? (
+                    <>
+                      Estimated <span className="font-medium text-foreground/80">~$1/month</span> for a
+                      US local number (billed by Daily).
+                    </>
+                  ) : (
+                    <>
+                      Estimated <span className="font-medium text-foreground/80">~$1.15/month</span> for local,{" "}
+                      <span className="font-medium text-foreground/80">~$2.15/month</span> for toll-free
+                      (billed by Twilio).
+                    </>
+                  )}
                 </p>
                 {purchaseError && (
                   <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -705,7 +794,11 @@ export default function PhoneNumbersPage() {
                   <>
                     This permanently releases{" "}
                     <span className="font-mono text-foreground">{formatPhoneNumberLabel(releaseTarget)}</span>{" "}
-                    from your Twilio account.
+                    from your{" "}
+                    {((releaseTarget.provider as PhoneNumberProvider) ?? "twilio") === "daily"
+                      ? "Daily"
+                      : "Twilio"}{" "}
+                    account.
                   </>
                 )}
               </DialogDescription>
@@ -716,7 +809,12 @@ export default function PhoneNumbersPage() {
                 What happens next
               </p>
               <ul className="list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/75 marker:text-muted-foreground/60">
-                <li>Monthly Twilio billing (~$1.15/mo local) for this number stops</li>
+                <li>
+                  Monthly billing for this number stops at{" "}
+                  {((releaseTarget?.provider as PhoneNumberProvider) ?? "twilio") === "daily"
+                    ? "Daily"
+                    : "Twilio"}
+                </li>
                 <li>The number may be purchased by someone else</li>
                 <li>Inbound and outbound agent assignments are cleared</li>
                 <li className="font-medium text-foreground/90">This cannot be undone</li>
