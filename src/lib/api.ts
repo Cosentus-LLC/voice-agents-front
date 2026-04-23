@@ -415,15 +415,29 @@ export async function syncTwilioNumbers(): Promise<{ total: number }> {
   return res.json()
 }
 
+export type PhoneNumberProvider = "daily" | "twilio"
+
+/**
+ * Search available phone numbers. Defaults to provider="daily" — the Daily
+ * path is implemented in the Lambda; the Twilio path is still a stub and
+ * returns an empty list with a note. Pre-existing callers that passed
+ * twilio-shaped params (country, area_code, contains) continue to work
+ * because the Lambda accepts both camelCase `areaCode` and snake_case
+ * `area_code` on the Daily path, and accepts the full twilio param set
+ * on the Twilio path.
+ */
 export async function searchAvailableNumbers(params: {
-  country?: string
+  provider?: PhoneNumberProvider
   area_code?: string
+  country?: string
   contains?: string
   limit?: number
 }) {
   const searchParams = new URLSearchParams()
+  const provider = params.provider ?? "daily"
+  searchParams.set("provider", provider)
+  if (params.area_code) searchParams.set("areaCode", params.area_code)
   if (params.country) searchParams.set("country", params.country)
-  if (params.area_code) searchParams.set("area_code", params.area_code)
   if (params.contains) searchParams.set("contains", params.contains)
   if (params.limit) searchParams.set("limit", String(params.limit))
 
@@ -432,18 +446,47 @@ export async function searchAvailableNumbers(params: {
   return res.json()
 }
 
-export async function purchaseNumber(data: { number: string; friendly_name: string }) {
-  const res = await fetch(`${API_BASE}/api/phone-numbers/purchase`, {
+/**
+ * Buy a phone number. Defaults to provider="daily". When provider="twilio"
+ * the Lambda returns 501 (Twilio purchase not implemented yet).
+ *
+ * Response body is the newly-persisted voice_phone_numbers row, including
+ * `provider` and `daily_number_id` (for Daily) so the caller can refresh
+ * its list without a separate fetch.
+ */
+export async function purchaseNumber(data: {
+  provider?: PhoneNumberProvider
+  number: string
+  friendly_name: string
+}) {
+  const payload = {
+    provider: data.provider ?? "daily",
+    number: data.number,
+    friendly_name: data.friendly_name,
+  }
+  const res = await fetch(`${API_BASE}/api/phone-numbers/buy`, {
     method: "POST",
     headers: jsonHeaders(),
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   })
   if (!res.ok) throwFromApiBody(await parseErrorBody(res))
   return res.json()
 }
 
+/**
+ * Release a phone number. Provider-aware on the server: Daily numbers hit
+ * Daily's DELETE /phone-number/:daily_number_id first, then the DB row is
+ * removed. Twilio numbers (for now) just drop the DB row.
+ *
+ * Uses DELETE /api/phone-numbers/:id per REST convention. The Lambda also
+ * accepts the legacy POST /:id/release path for rollback safety, but the
+ * frontend should always use DELETE.
+ */
 export async function releaseNumber(id: string) {
-  const res = await fetch(`${API_BASE}/api/phone-numbers/${encodeURIComponent(id)}/release`, { method: "POST", headers: authHeaders() })
+  const res = await fetch(`${API_BASE}/api/phone-numbers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  })
   if (!res.ok) throwFromApiBody(await parseErrorBody(res))
   return res.json()
 }
