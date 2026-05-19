@@ -160,7 +160,7 @@ export interface AgentVersion {
   published_by: string | null
 }
 
-export type PhoneNumberProvider = "twilio" | "daily"
+export type PhoneNumberProvider = "daily" | "twilio"
 
 export interface PhoneNumber {
   id: string

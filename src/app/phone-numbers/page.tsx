@@ -5,13 +5,11 @@ import {
   getPhoneNumbers,
   getAgents,
   updatePhoneNumber,
-  syncTwilioNumbers,
   searchAvailableNumbers,
   purchaseNumber,
   releaseNumber,
-  type PhoneNumberProvider,
 } from "@/lib/api"
-import type { AgentListItem, PhoneNumber } from "@/lib/types"
+import type { AgentListItem, PhoneNumber, PhoneNumberProvider } from "@/lib/types"
 import { cn, formatPhone, formatPhoneNumberLabel } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,7 +38,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { Search, Phone, RefreshCw, Loader2, ShoppingCart, Unplug, Pencil } from "lucide-react"
+import { Search, Phone, Loader2, ShoppingCart, Unplug, Pencil } from "lucide-react"
 import {
   Tooltip,
   TooltipContent,
@@ -63,8 +61,8 @@ function rowToEdit(p: PhoneNumber): RowEdit {
 
 /**
  * Small badge next to each number indicating which provider it was bought
- * through. Daily is the new default (neutral green); Twilio is the legacy
- * path (amber) so it stands out as "pre-migration inventory".
+ * through. Daily is the active provider; Twilio rows persist for legacy
+ * numbers that pre-date the v2 migration but are no longer purchasable here.
  */
 function ProviderBadge({ provider }: { provider: PhoneNumberProvider }) {
   const label = provider === "daily" ? "Daily" : "Twilio"
@@ -94,16 +92,14 @@ export default function PhoneNumbersPage() {
   const [edits, setEdits] = useState<Record<string, RowEdit>>({})
   const [loading, setLoading] = useState(true)
   const [savingId, setSavingId] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
 
   const [buyOpen, setBuyOpen] = useState(false)
-  const [buyProvider, setBuyProvider] = useState<PhoneNumberProvider>("daily")
   const [buyCountry, setBuyCountry] = useState("US")
   const [buyAreaCode, setBuyAreaCode] = useState("")
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [searchResults, setSearchResults] = useState<
-    { number: string; city?: string; region?: string; price?: string; provider?: PhoneNumberProvider }[]
+    { number: string; city?: string; region?: string; price?: string }[]
   >([])
   const [selectedNumber, setSelectedNumber] = useState<string>("")
   const [purchaseFriendly, setPurchaseFriendly] = useState("")
@@ -200,19 +196,6 @@ export default function PhoneNumbersPage() {
     }
   }, [editingNameId])
 
-  const handleSyncTwilio = async () => {
-    setSyncing(true)
-    try {
-      const data = await syncTwilioNumbers()
-      const total = typeof data.total === "number" ? data.total : 0
-      toast.success(`Synced ${total} numbers from Twilio`)
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Sync failed")
-    }
-    setSyncing(false)
-  }
-
   const runSearch = async () => {
     setSearchError(null)
     setPurchaseError(null)
@@ -228,7 +211,6 @@ export default function PhoneNumbersPage() {
       }
 
       const params = {
-        provider: buyProvider,
         area_code: q,
         country: buyCountry,
         limit: 30,
@@ -252,14 +234,13 @@ export default function PhoneNumbersPage() {
               : typeof priceRaw === "string"
                 ? priceRaw
                 : undefined
-          return { number, city, region, price, provider: buyProvider }
+          return { number, city, region, price }
         })
         .filter(Boolean) as {
           number: string
           city?: string
           region?: string
           price?: string
-          provider?: PhoneNumberProvider
         }[]
 
       setSearchResults(normalized)
@@ -268,9 +249,7 @@ export default function PhoneNumbersPage() {
       }
       if (normalized.length === 0 && !data?.note) {
         setSearchError(
-          buyProvider === "twilio"
-            ? "No numbers matched. Twilio search isn't fully wired yet — try Daily."
-            : `No Daily numbers available for area code ${q} right now. Try another area code.`
+          `No numbers available for area code ${q} right now. Try another area code.`
         )
       }
     } catch (e) {
@@ -291,11 +270,10 @@ export default function PhoneNumbersPage() {
     try {
       const friendly = purchaseFriendly.trim() || selectedNumber
       await purchaseNumber({
-        provider: buyProvider,
         number: selectedNumber,
         friendly_name: friendly,
       })
-      toast.success(`Purchased ${formatPhone(selectedNumber)} (${buyProvider})`)
+      toast.success(`Purchased ${formatPhone(selectedNumber)}`)
       setBuyOpen(false)
       setBuyAreaCode("")
       setSearchResults([])
@@ -333,20 +311,6 @@ export default function PhoneNumbersPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void handleSyncTwilio()}
-            disabled={syncing}
-            title="Import numbers you already own on your Twilio account"
-          >
-            {syncing ? (
-              <Loader2 size={16} className="mr-1.5 animate-spin" />
-            ) : (
-              <RefreshCw size={16} className="mr-1.5" />
-            )}
-            Sync from Twilio
-          </Button>
           <Button
             type="button"
             onClick={() => setBuyOpen(true)}
@@ -396,7 +360,7 @@ export default function PhoneNumbersPage() {
           <Phone size={40} className="text-muted-foreground/50" />
           <h3 className="mt-4 text-lg font-medium">No phone numbers</h3>
           <p className="mt-1 max-w-sm text-center text-sm text-muted-foreground">
-            Sync numbers you already own from Twilio, or buy a new number to assign agents.
+            Buy a number to assign agents for inbound or outbound calls.
           </p>
         </div>
       ) : (
@@ -415,7 +379,7 @@ export default function PhoneNumbersPage() {
               {phones.map((p) => {
                 const e = edits[p.id] ?? rowToEdit(p)
                 const saving = savingId === p.id
-                const provider: PhoneNumberProvider = (p.provider as PhoneNumberProvider) ?? "twilio"
+                const provider: PhoneNumberProvider = (p.provider as PhoneNumberProvider) ?? "daily"
                 return (
                   <TableRow key={p.id}>
                     <TableCell className={cn(PHONE_TABLE_ROW_HOVER, "font-mono text-sm")}>
@@ -576,7 +540,6 @@ export default function PhoneNumbersPage() {
               <DialogTitle className="text-lg font-semibold tracking-tight">Buy phone number</DialogTitle>
               <DialogDescription className="text-[15px] leading-relaxed text-foreground/85">
                 Search available numbers by area code, choose one, and add it to your workspace.
-                Defaults to Daily; switch to Twilio if you have legacy inventory to match.
               </DialogDescription>
             </DialogHeader>
 
@@ -585,27 +548,6 @@ export default function PhoneNumbersPage() {
                 Search inventory
               </p>
               <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Provider</Label>
-                  <Select
-                    value={buyProvider}
-                    onValueChange={(v) => {
-                      const p = (v ?? "daily") as PhoneNumberProvider
-                      setBuyProvider(p)
-                      setSearchResults([])
-                      setSelectedNumber("")
-                    }}
-                  >
-                    <SelectTrigger className="h-9 w-full max-w-md border border-black/[0.06] bg-background shadow-none hover:bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="twilio">Twilio (legacy)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
                 <div className="space-y-1.5">
                   <Label>Country</Label>
                   <Select value={buyCountry} onValueChange={(v) => setBuyCountry(v ?? "US")}>
@@ -706,7 +648,7 @@ export default function PhoneNumbersPage() {
                             </div>
                           </div>
                           <div className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                            {r.price ?? (buyProvider === "daily" ? "~$1/mo" : "~$1.15/mo")}
+                            {r.price ?? "~$1/mo"}
                           </div>
                         </button>
                       )
@@ -737,18 +679,8 @@ export default function PhoneNumbersPage() {
                   />
                 </div>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  {buyProvider === "daily" ? (
-                    <>
-                      Estimated <span className="font-medium text-foreground/80">~$1/month</span> for a
-                      US local number (billed by Daily).
-                    </>
-                  ) : (
-                    <>
-                      Estimated <span className="font-medium text-foreground/80">~$1.15/month</span> for local,{" "}
-                      <span className="font-medium text-foreground/80">~$2.15/month</span> for toll-free
-                      (billed by Twilio).
-                    </>
-                  )}
+                  Estimated <span className="font-medium text-foreground/80">~$1/month</span> for a
+                  US local number (billed by Daily).
                 </p>
                 {purchaseError && (
                   <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -795,7 +727,7 @@ export default function PhoneNumbersPage() {
                     This permanently releases{" "}
                     <span className="font-mono text-foreground">{formatPhoneNumberLabel(releaseTarget)}</span>{" "}
                     from your{" "}
-                    {((releaseTarget.provider as PhoneNumberProvider) ?? "twilio") === "daily"
+                    {((releaseTarget.provider as PhoneNumberProvider) ?? "daily") === "daily"
                       ? "Daily"
                       : "Twilio"}{" "}
                     account.
@@ -811,7 +743,7 @@ export default function PhoneNumbersPage() {
               <ul className="list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/75 marker:text-muted-foreground/60">
                 <li>
                   Monthly billing for this number stops at{" "}
-                  {((releaseTarget?.provider as PhoneNumberProvider) ?? "twilio") === "daily"
+                  {((releaseTarget?.provider as PhoneNumberProvider) ?? "daily") === "daily"
                     ? "Daily"
                     : "Twilio"}
                 </li>

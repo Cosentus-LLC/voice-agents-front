@@ -225,12 +225,6 @@ export async function cancelBatch(batchId: string) {
   return res.json()
 }
 
-export async function getBatchStatus(batchId: string) {
-  const res = await fetch(`${API_BASE}/api/batches/${batchId}/status`, { headers: authHeaders() })
-  if (!res.ok) throw new Error(`Status fetch failed: ${res.statusText}`)
-  return res.json()
-}
-
 export async function downloadResults(batchId: string) {
   const res = await fetch(`${API_BASE}/api/batches/${batchId}/results`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`Download failed: ${res.statusText}`)
@@ -389,16 +383,6 @@ export async function getPhoneNumbers(): Promise<PhoneNumber[]> {
   return data.phone_numbers ?? data
 }
 
-export async function createPhoneNumber(data: { number: string; friendly_name: string }): Promise<PhoneNumber> {
-  const res = await fetch(`${API_BASE}/api/phone-numbers`, {
-    method: "POST",
-    headers: jsonHeaders(),
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throwFromApiBody(await parseErrorBody(res))
-  return res.json()
-}
-
 export async function updatePhoneNumber(id: string, data: Record<string, unknown>): Promise<PhoneNumber> {
   const res = await fetch(`${API_BASE}/api/phone-numbers/${encodeURIComponent(id)}`, {
     method: "PUT",
@@ -409,33 +393,18 @@ export async function updatePhoneNumber(id: string, data: Record<string, unknown
   return res.json()
 }
 
-export async function syncTwilioNumbers(): Promise<{ total: number }> {
-  const res = await fetch(`${API_BASE}/api/phone-numbers/sync-twilio`, { method: "POST", headers: authHeaders() })
-  if (!res.ok) throwFromApiBody(await parseErrorBody(res))
-  return res.json()
-}
-
-export type PhoneNumberProvider = "daily" | "twilio"
-
 /**
- * Search available phone numbers. Defaults to provider="daily" — the Daily
- * path is implemented in the Lambda; the Twilio path is still a stub and
- * returns an empty list with a note. Pre-existing callers that passed
- * twilio-shaped params (country, area_code, contains) continue to work
- * because the Lambda accepts both camelCase `areaCode` and snake_case
- * `area_code` on the Daily path, and accepts the full twilio param set
- * on the Twilio path.
+ * Search available phone numbers via the Daily provider. The Lambda accepts
+ * both camelCase `areaCode` and snake_case `area_code`.
  */
 export async function searchAvailableNumbers(params: {
-  provider?: PhoneNumberProvider
   area_code?: string
   country?: string
   contains?: string
   limit?: number
 }) {
   const searchParams = new URLSearchParams()
-  const provider = params.provider ?? "daily"
-  searchParams.set("provider", provider)
+  searchParams.set("provider", "daily")
   if (params.area_code) searchParams.set("areaCode", params.area_code)
   if (params.country) searchParams.set("country", params.country)
   if (params.contains) searchParams.set("contains", params.contains)
@@ -447,20 +416,13 @@ export async function searchAvailableNumbers(params: {
 }
 
 /**
- * Buy a phone number. Defaults to provider="daily". When provider="twilio"
- * the Lambda returns 501 (Twilio purchase not implemented yet).
- *
- * Response body is the newly-persisted voice_phone_numbers row, including
- * `provider` and `daily_number_id` (for Daily) so the caller can refresh
- * its list without a separate fetch.
+ * Buy a phone number from Daily. Response body is the newly-persisted
+ * voice_phone_numbers row, including `daily_number_id`, so the caller can
+ * refresh its list without a separate fetch.
  */
-export async function purchaseNumber(data: {
-  provider?: PhoneNumberProvider
-  number: string
-  friendly_name: string
-}) {
+export async function purchaseNumber(data: { number: string; friendly_name: string }) {
   const payload = {
-    provider: data.provider ?? "daily",
+    provider: "daily",
     number: data.number,
     friendly_name: data.friendly_name,
   }
@@ -474,13 +436,8 @@ export async function purchaseNumber(data: {
 }
 
 /**
- * Release a phone number. Provider-aware on the server: Daily numbers hit
- * Daily's DELETE /phone-number/:daily_number_id first, then the DB row is
- * removed. Twilio numbers (for now) just drop the DB row.
- *
- * Uses DELETE /api/phone-numbers/:id per REST convention. The Lambda also
- * accepts the legacy POST /:id/release path for rollback safety, but the
- * frontend should always use DELETE.
+ * Release a phone number. Daily numbers hit Daily's
+ * DELETE /phone-number/:daily_number_id first, then the DB row is removed.
  */
 export async function releaseNumber(id: string) {
   const res = await fetch(`${API_BASE}/api/phone-numbers/${encodeURIComponent(id)}`, {
