@@ -155,9 +155,13 @@ export default function CallsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Agents</SelectItem>
-            {agentOptions.map((a) => (
-              <SelectItem key={a.display_name} value={a.display_name}>{a.display_name}</SelectItem>
-            ))}
+            {agentOptions
+              .filter((a) => a.display_name && a.agent_name)
+              .map((a) => (
+                <SelectItem key={a.agent_name} value={a.display_name}>
+                  {a.display_name}
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </div>

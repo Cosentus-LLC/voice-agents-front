@@ -85,13 +85,37 @@ export async function getCallAgentNames(): Promise<{ display_name: string; agent
   if (!res.ok) throw new Error(`Failed to get agent names: ${res.status}`)
   const data = await res.json()
   const list = data.agents ?? data.agent_names ?? data
-  if (Array.isArray(list)) {
-    if (list.length > 0 && typeof list[0] === "string") {
-      return list.map((name: string) => ({ display_name: name, agent_name: name }))
+  if (!Array.isArray(list)) return []
+
+  const normalized: { display_name: string; agent_name: string }[] =
+    list.length > 0 && typeof list[0] === "string"
+      ? list.map((name: string) => ({ display_name: name, agent_name: name }))
+      : list
+
+  // Backend (/api/calls/agents) currently returns duplicates and empty rows
+  // (one entry per call rather than per distinct agent). Dedupe defensively:
+  //   - drop entries missing agent_name or display_name
+  //   - when multiple rows share an agent_name, prefer the one whose
+  //     display_name differs from the slug (i.e. the canonical display name)
+  const byAgentName = new Map<string, { display_name: string; agent_name: string }>()
+  for (const entry of normalized) {
+    const agentName = entry?.agent_name?.trim()
+    const displayName = entry?.display_name?.trim()
+    if (!agentName || !displayName) continue
+    const existing = byAgentName.get(agentName)
+    if (!existing) {
+      byAgentName.set(agentName, { agent_name: agentName, display_name: displayName })
+      continue
     }
-    return list
+    const existingIsSlug = existing.display_name === existing.agent_name
+    const candidateIsSlug = displayName === agentName
+    if (existingIsSlug && !candidateIsSlug) {
+      byAgentName.set(agentName, { agent_name: agentName, display_name: displayName })
+    }
   }
-  return []
+  return Array.from(byAgentName.values()).sort((a, b) =>
+    a.display_name.localeCompare(b.display_name),
+  )
 }
 
 export async function deleteCall(callId: string): Promise<void> {
