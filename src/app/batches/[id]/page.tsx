@@ -120,7 +120,7 @@ export default function BatchDetailPage({
   const handleCancel = async () => {
     try {
       await cancelBatch(id)
-      setBatch((prev) => prev ? { ...prev, status: "canceled" } : prev)
+      setBatch((prev) => prev ? { ...prev, status: "cancelled" } : prev)
       toast.success("Batch canceled")
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to cancel batch")
