@@ -1,11 +1,67 @@
+/**
+ * API data contracts for the Cosentus voice dashboard.
+ *
+ * These mirror the response shapes served by `api-lambda-v2` (the backend is
+ * the source of truth). When the backend changes a shape, change it here — the
+ * resource modules under `./api` and the components both read from this file,
+ * so it is the single definition of "what the data looks like".
+ *
+ * Fields marked `@deprecated` are shapes the backend no longer sends; they are
+ * kept optional so existing components still compile, and are the checklist for
+ * the UI-migration phase.
+ */
+
+// ── Calls ───────────────────────────────────────────────────────────
+
+export type CallDirection = "outbound" | "inbound" | "browser" | "test"
+
+export type CallStatus =
+  | "pending"
+  | "queued"
+  | "dialing"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "no_answer"
+  | "busy"
+  | "cancelled"
+
+/**
+ * One turn of the call transcript.
+ *
+ * The backend emits `speaker` (`assistant` | `user` | `tool`) plus turn
+ * metadata. The old `role` field never existed on the wire — components that
+ * still read `.role` must migrate to `.speaker` in the UI phase.
+ */
+export interface TranscriptTurn {
+  speaker: "user" | "assistant" | "tool"
+  content: string
+  timestamp: string
+  interrupted?: boolean
+  turn_number?: number
+  /** @deprecated Not sent by the backend; use {@link TranscriptTurn.speaker}. */
+  role?: "user" | "assistant"
+}
+
+/** Quality score attached to a single call detail (from `voice_call_scores`). */
+export interface CallScore {
+  overall: number
+  criteria_total: number
+  criteria_met: number
+  rubric_source: string
+  template_name: string | null
+  use_case: string | null
+  criteria: { name: string; met: boolean; note?: string }[]
+}
+
 export interface Call {
   id: string
   agent_name: string
+  agent_display_name?: string | null
   from_number?: string | null
   target_number: string
-  agent_display_name?: string | null
-  direction: "outbound" | "inbound" | "test"
-  status: "pending" | "in_progress" | "completed" | "failed" | "no_answer"
+  direction: CallDirection
+  status: CallStatus
   started_at: string | null
   ended_at: string | null
   duration_secs: number | null
@@ -16,14 +72,30 @@ export interface Call {
   error: string | null
   batch_id: string | null
   batch_row_index: number | null
+  session_id?: string | null
+  terminal_step?: string | null
+  transferred?: boolean
+  latency_ms?: number | null
+  hidden?: boolean
+  /** Present only on `GET /api/calls/:id` (detail), not on the list. */
+  score?: CallScore | null
   created_at: string
   updated_at: string
 }
 
+export interface CallListResponse {
+  calls: Call[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// ── Post-call extraction schema ─────────────────────────────────────
+
 export interface PostCallField {
   name: string
   type: "text" | "selector"
-  description: string
+  description?: string
   format_examples?: string[]
   choices?: string[]
 }
@@ -33,11 +105,18 @@ export interface PostCallConfig {
   fields: PostCallField[]
 }
 
-export interface TranscriptTurn {
-  role: "user" | "assistant"
-  content: string
-  timestamp: string
-}
+// ── Batches ─────────────────────────────────────────────────────────
+
+export type BatchStatus =
+  | "draft"
+  | "validating"
+  | "ready"
+  | "scheduled"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled"
 
 export interface Batch {
   id: string
@@ -45,13 +124,10 @@ export interface Batch {
   agent_name: string
   agent_display_name?: string | null
   from_number: string
-  status: "draft" | "validating" | "ready" | "running" | "completed" | "failed" | "scheduled" | "paused" | "canceled"
+  status: BatchStatus
   total_rows: number
   completed_rows: number
   failed_rows: number
-  column_mapping: Record<string, string>
-  config: Record<string, unknown>
-  rows: unknown[]
   input_file_path: string | null
   output_file_path: string | null
   timezone: string | null
@@ -63,36 +139,56 @@ export interface Batch {
   updated_at: string
 }
 
-export interface UploadResponse {
-  batch_id: string
-  columns: string[]
-  summary: {
-    total: number
-    valid: number
-    fixable: number
-    invalid: number
-  }
-  rows: UploadedRow[]
-}
-
-export interface UploadedRow {
-  index: number
-  phone_raw: string
-  phone_normalized: string
-  status: "valid" | "fixable" | "invalid"
-  error: string | null
-  data: Record<string, string>
-}
-
-export interface BatchStatusResponse {
-  batch_id: string
-  status: string
+/** Per-status counts returned by batch detail / progress. */
+export interface BatchProgress {
   total: number
   completed: number
   failed: number
+  pending: number
+  dialing: number
+  queued: number
+  skipped: number
+  cancelled: number
 }
 
-/** Tool is now an object, not a string */
+export interface BatchDetailResponse {
+  batch: Batch
+  calls: Call[]
+  progress: BatchProgress
+}
+
+/** One parsed row returned by `POST /api/batches/upload`. */
+export interface UploadedRow {
+  row_index: number
+  phone: string
+  phone_e164: string | null
+  validation: "valid" | "fixable" | "invalid"
+  data: Record<string, string>
+  case_data: Record<string, string>
+  missing_required_fields: string[]
+  incomplete_reason: string | null
+  /** @deprecated Old upload shape; the batch wizard still reads these until the UI phase. */
+  index?: number
+  /** @deprecated Use {@link UploadedRow.phone}. */
+  phone_raw?: string
+  /** @deprecated Use {@link UploadedRow.phone_e164}. */
+  phone_normalized?: string
+  /** @deprecated Use {@link UploadedRow.validation}. */
+  status?: "valid" | "fixable" | "invalid"
+  /** @deprecated Use {@link UploadedRow.incomplete_reason}. */
+  error?: string | null
+}
+
+export interface UploadResponse {
+  batch_id: string
+  columns: string[]
+  summary: { total: number; valid: number; fixable: number; invalid: number }
+  rows: UploadedRow[]
+}
+
+// ── Agents ──────────────────────────────────────────────────────────
+
+/** A conversation tool bound to an agent (end_call, press_digit, transfer_call). */
 export interface AgentTool {
   type: string
   description: string
@@ -123,6 +219,13 @@ export interface Agent {
   tools: AgentTool[]
   system_prompt: string
   first_message: string
+  // v2 (June rebuild) — structured conversation + identity/IVR policy
+  flow_definition: FlowDefinition | null
+  ivr_goal: string
+  identity_verification_keys: string[]
+  call_kind: "payer" | "patient" | null
+  required_fields: string[]
+  success_criteria: string[]
   recording_enabled: boolean
   recording_channels: number
   post_call_analyses: PostCallConfig
@@ -138,11 +241,12 @@ export interface Agent {
   calling_window_end: string
   calling_window_days: string[]
   is_active: boolean
+  speak_first: boolean
   created_at: string
   updated_at: string
 }
 
-/** Row in Supabase agent_drafts — same shape as Agent + draft metadata */
+/** Row in `agent_drafts` — same shape as Agent plus draft metadata. */
 export interface AgentDraft extends Agent {
   agent_id: string
   has_unpublished_changes: boolean
@@ -160,42 +264,220 @@ export interface AgentVersion {
   published_by: string | null
 }
 
-export type PhoneNumberProvider = "daily" | "twilio"
-
-export interface PhoneNumber {
-  id: string
-  number: string
-  friendly_name: string
-  inbound_agent: { id: string; name: string; display_name: string } | null
-  outbound_agent: { id: string; name: string; display_name: string } | null
-  is_active: boolean
-  /**
-   * Where the number was purchased from. `'twilio'` for the legacy numbers
-   * that pre-date the Daily migration (April 2026); `'daily'` for any
-   * number bought after the migration landed. The Lambda defaults missing
-   * column values to `'twilio'` during schema migration, so older rows
-   * always surface as twilio.
-   */
-  provider?: PhoneNumberProvider
-  /**
-   * Daily's own UUID for the number. Required to release a Daily number;
-   * always null / absent for twilio rows.
-   */
-  daily_number_id?: string | null
+/** Slim item from `GET /api/agents` (list); full fields come from the detail route. */
+export interface AgentListItem {
+  id?: string
+  name: string
+  display_name: string
+  description?: string
+  llm_model?: string | null
+  tts_model?: string | null
+  tts_voice_id?: string | null
 }
 
 export interface AgentSchema {
   llm_models: string[]
   tts_providers: string[]
   tts_models: Record<string, string[]> | string[]
+  tts_models_by_provider?: Record<string, string[]>
   stt_providers: string[]
   stt_languages: string[]
   tool_types: string[]
   tool_settings_schema: Record<string, unknown>
   voicemail_actions: string[]
+  calling_days?: string[]
+  // v2 additions
+  post_call_field_types?: string[]
+  identity_verification_keys?: string[]
+  call_kinds?: (string | null)[]
+  max_prompt_length?: number
+  max_display_name_length?: number
+  max_first_message_length?: number
+  valid_recording_channels?: number[]
   field_ranges: Record<string, { min: number; max: number; step: number; default: number }>
   defaults: Record<string, unknown>
 }
+
+// ── Flows (v2) ──────────────────────────────────────────────────────
+
+/**
+ * A structured conversation flow. The node graph is intentionally permissive
+ * here — the backend validates the full graph (start present, reachability, no
+ * cycles) on save/test; the dashboard only needs the envelope plus the common
+ * node fields it renders.
+ */
+export interface FlowNode {
+  type: string
+  prompt?: string
+  transitions?: Record<string, string>
+  captures?: string[]
+  [key: string]: unknown
+}
+
+export interface FlowDefinition {
+  version: number
+  start: string
+  nodes: Record<string, FlowNode>
+  [key: string]: unknown
+}
+
+export interface FlowResponse {
+  agent_id: string
+  flow_definition: FlowDefinition | null
+}
+
+/** Result of `POST /api/agents/:name/flow/test` — validate + dry-run, never dials. */
+export interface FlowTestResult {
+  agent_id: string
+  valid: boolean
+  errors: string[]
+  status: string
+  path: string[]
+  captures: Record<string, unknown>
+  warnings: string[]
+  note?: string
+}
+
+// ── Call templates (v2) ─────────────────────────────────────────────
+
+export interface CallTemplate {
+  id: string
+  name: string
+  display_name: string
+  use_case: string
+  description: string
+  system_prompt: string
+  first_message: string
+  required_fields: string[]
+  success_criteria: string[]
+  post_call_analyses: PostCallConfig
+  llm_model: string
+  flow_definition: FlowDefinition | null
+  call_kind: "payer" | "patient" | null
+  ivr_goal: string
+  identity_verification_keys: string[]
+}
+
+// ── Payer knowledge base (v2) ───────────────────────────────────────
+
+export interface Payer {
+  id: string
+  payer_name: string
+  payer_id: string | null
+  phone_claims: string | null
+  phone_auth: string | null
+  phone_eligibility: string | null
+  phone_appeals: string | null
+  fax_claims: string | null
+  fax_appeals: string | null
+  portal_url: string | null
+  ivr_path_claims: string | null
+  timely_filing_days: number | null
+  appeal_deadline_days: number | null
+  payer_type: string | null
+}
+
+// ── Post-call intelligence / analytics (v2) ─────────────────────────
+
+export interface RoiSummary {
+  calls: { total: number; completed: number; no_answer: number; completion_rate: number }
+  costs: {
+    total_spent: number
+    avg_per_call: number
+    calls_costed: number
+    is_estimate: boolean
+    estimate_note: string
+  }
+  quality: { avg_score: number; high_quality_pct: number }
+  roi: {
+    estimated_recovered: number
+    total_spent: number
+    roi_multiple: number
+    is_estimate: boolean
+    estimate_note: string
+  }
+  success_rate: number
+  success_rate_definition: string
+  transfer_rate: number
+  avg_latency_ms: number
+  dropoff_by_step: { step_name: string; count: number }[]
+}
+
+export interface DenialPattern {
+  payer: string
+  denial_reason: string
+  call_count: number
+  resolved: number
+  common_actions: string[]
+  avg_duration: number
+}
+
+/** Result of triggering the post-call auto-action pipeline for a call. */
+export interface AutoActionResult {
+  call_id: string
+  actions_taken: number
+  actions: { type: string; table: string }[]
+  cost: number
+  cost_is_estimate: boolean
+  cost_estimate_note: string
+  quality_score: number | null
+}
+
+// ── Call requests (v2 single-call queue) ────────────────────────────
+
+export type CallRequestStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export interface CallRequest {
+  id: string
+  agent_name: string
+  to_number: string
+  from_number: string
+  case_data: Record<string, string>
+  trigger_source: string | null
+  dedup_key: string | null
+  status: CallRequestStatus
+  attempt_count: number
+  max_attempts: number | null
+  call_id: string | null
+  error_message: string | null
+  scheduled_after: string | null
+  calling_window_start: string | null
+  calling_window_end: string | null
+  calling_window_timezone: string | null
+  calling_window_days: string[] | null
+  created_at: string
+  updated_at: string
+}
+
+// ── Phone numbers ───────────────────────────────────────────────────
+
+export type PhoneNumberProvider = "daily" | "twilio"
+
+export interface PhoneNumberAgentRef {
+  id: string
+  name: string
+  display_name: string
+}
+
+export interface PhoneNumber {
+  id: string
+  number: string
+  friendly_name: string
+  inbound_agent: PhoneNumberAgentRef | null
+  outbound_agent: PhoneNumberAgentRef | null
+  is_active: boolean
+  /** `'twilio'` for pre-migration numbers; `'daily'` for anything bought since. */
+  provider?: PhoneNumberProvider
+  /** Daily's UUID for the number; required to release a Daily number, null for twilio rows. */
+  daily_number_id?: string | null
+}
+
+// ── Voices ──────────────────────────────────────────────────────────
 
 export interface Voice {
   voice_id: string
@@ -211,13 +493,13 @@ export interface Voice {
   created_at: string
 }
 
-/** List item from GET /api/agents (id used for phone routing; may include model fields flat on the object) */
-export interface AgentListItem {
-  id?: string
-  name: string
-  display_name: string
-  description: string
-  llm_model?: string | null
-  tts_model?: string | null
-  tts_voice_id?: string | null
+// ── Test call (browser) ─────────────────────────────────────────────
+
+/** Response from the engine's `POST /start { direction: "browser" }`. */
+export interface BrowserCallSession {
+  call_id: string
+  room_name: string
+  room_url: string
+  viewer_token: string
+  status: string
 }

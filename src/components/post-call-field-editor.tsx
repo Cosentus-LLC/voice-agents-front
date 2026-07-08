@@ -70,7 +70,7 @@ export function PostCallFieldEditor({ open, field, readOnly, onSave, onCancel }:
       onSave({
         ...draft,
         name,
-        description: draft.description.trim(),
+        description: (draft.description ?? "").trim(),
         choices,
       })
       return
@@ -79,7 +79,7 @@ export function PostCallFieldEditor({ open, field, readOnly, onSave, onCancel }:
     onSave({
       ...draft,
       name,
-      description: draft.description.trim(),
+      description: (draft.description ?? "").trim(),
       format_examples: cleanList(draft.format_examples ?? []),
     })
   }

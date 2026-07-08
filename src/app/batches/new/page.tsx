@@ -16,7 +16,6 @@ import type {
   AgentListItem,
   PhoneNumber,
   UploadResponse,
-  UploadedRow,
 } from "@/lib/types"
 import { cn, formatPhone, formatPhoneNumberLabel } from "@/lib/utils"
 import { format } from "date-fns"
@@ -262,7 +261,19 @@ function NumberStepper({
 
 // ─── Types ───
 
-interface EditableRow extends UploadedRow {
+/**
+ * View-model for the editable upload grid. Deliberately its own shape (not the
+ * API's `UploadedRow`) — the wizard maps the wire rows into this, and the UI
+ * phase can migrate the field names (index → row_index, etc.) when it touches
+ * the grid rendering.
+ */
+interface EditableRow {
+  index: number
+  phone_raw: string
+  phone_normalized: string
+  status: "valid" | "fixable" | "invalid"
+  error: string | null
+  data: Record<string, string>
   excluded: boolean
   edited: Set<string>
   phoneValid: boolean

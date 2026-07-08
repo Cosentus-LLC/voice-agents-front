@@ -7,8 +7,15 @@ interface TranscriptViewerProps {
   transcript: TranscriptTurn[]
 }
 
-function roleLabel(role: string): string {
-  return role === "assistant" ? "Agent" : "User"
+/** The backend sends `speaker`; older payloads used `role`. Read either. */
+function turnSpeaker(turn: TranscriptTurn): string {
+  return turn.speaker ?? turn.role ?? "user"
+}
+
+function roleLabel(speaker: string): string {
+  if (speaker === "assistant") return "Agent"
+  if (speaker === "tool") return "Action"
+  return "User"
 }
 
 function relativeTimestamp(timestamp: string | undefined, firstTimestamp: string | undefined): string {
@@ -25,7 +32,7 @@ function mergeConsecutiveTurns(transcript: TranscriptTurn[]): TranscriptTurn[] {
     const last = merged[merged.length - 1]
     if (
       last &&
-      last.role === turn.role &&
+      turnSpeaker(last) === turnSpeaker(turn) &&
       turn.timestamp &&
       last.timestamp &&
       new Date(turn.timestamp).getTime() - new Date(last.timestamp).getTime() < MERGE_WINDOW_MS
@@ -58,12 +65,13 @@ export function TranscriptViewer({ transcript }: TranscriptViewerProps) {
       style={{ maxHeight: "500px" }}
     >
       {mergedTranscript.map((turn, i) => {
-        const isAgent = turn.role === "assistant"
+        const speaker = turnSpeaker(turn)
+        const isAgent = speaker === "assistant"
         return (
           <div key={i}>
             <div className="mb-1 flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">
-                {roleLabel(turn.role)}
+                {roleLabel(speaker)}
               </span>
               {turn.timestamp && (
                 <span className="text-xs tabular-nums text-muted-foreground">
